@@ -1,0 +1,83 @@
+# A股量化交易系统配置
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "debug"  # debug / release
+
+database:
+  type: "sqlite"
+  name: "data/aqsystem.db"
+
+log:
+  level: "info"
+  format: "console"
+  path: "logs/aqsystem.log"
+
+broker:
+  id: "sim_broker_01"
+  name: "模拟券商"
+  type: "simulated"  # simulated / xtquant / csc(中信建投) / cj(长江证券)
+  api_url: ""
+  account_id: ""
+  password: ""
+  ca_path: ""
+  cert_path: ""
+  is_demo: true
+  comm_type: "http"     # http / tcp / dll
+  app_key: ""           # 券商应用Key（中信建投/长江证券需要）
+  app_secret: ""        # 券商应用Secret
+  # ext_config:         # 扩展配置
+  #   key1: value1
+
+# ====== 中信建投配置示例 ======
+# broker:
+#   id: "csc_broker_01"
+#   name: "中信建投证券"
+#   type: "csc"
+#   api_url: "https://quant-demo.csc108.com/api/v1"  # 模拟环境
+#   account_id: "你的资金账号"
+#   password: "你的交易密码"
+#   is_demo: true
+#   comm_type: "http"
+#   app_key: "你的AppKey"
+#   app_secret: "你的AppSecret"
+
+# ====== 长江证券配置示例 ======
+# broker:
+#   id: "cj_broker_01"
+#   name: "长江证券"
+#   type: "cj"
+#   api_url: "https://quant-demo.95579.com/api/v1"  # 模拟环境
+#   account_id: "你的资金账号"
+#   password: "你的交易密码"
+#   is_demo: true
+#   comm_type: "http"
+#   app_key: "你的AppKey"
+#   app_secret: "你的AppSecret"
+
+market:
+  data_source: "sina"  # sina / tencent / eastmoney
+  refresh_interval: 3
+  ws_enabled: false
+  ws_url: ""
+
+risk:
+  max_single_position_pct: 0.3
+  max_total_position_pct: 0.8
+  max_daily_loss_pct: 0.05
+  max_drawdown_pct: 0.15
+  max_daily_trades: 50
+  stop_loss_pct: 0.08
+  take_profit_pct: 0.2
+  blacklist_stocks: []
+  allow_margin_trade: false
+  allow_t0_trade: false
+
+strategy:
+  max_concurrent: 10
+  backtest_init_capital: 1000000
+  commission_rate: 0.0003
+  stamp_tax_rate: 0.001
+  slippage: 0.001
+

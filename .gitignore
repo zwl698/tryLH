@@ -1,0 +1,32 @@
+# Go 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# 构建目录
+/bin/
+/dist/
+
+# 模块缓存
+/vendor/
+
+# 运行时数据
+/data/*.db
+/logs/*.log
+logs/
+
+# 配置敏感信息（如需保留示例请使用 config.example.yaml）
+# config.yaml
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.iml
+

@@ -408,4 +408,3 @@ func (b *CJBroker) checkLogin() error {
 	}
 	return nil
 }
-

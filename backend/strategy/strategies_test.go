@@ -122,11 +122,11 @@ func TestDoubleMAStrategy_NotEnoughData(t *testing.T) {
 
 func TestDoubleMAStrategy_OnQuote(t *testing.T) {
 	cfg := models.StrategyConfig{
-		ID:     "test_dma_quote",
-		Name:   "双均线OnQuote测试",
-		Type:   "double_ma",
-		Stocks: []string{"600000"},
-		Params: map[string]interface{}{},
+		ID:          "test_dma_quote",
+		Name:        "双均线OnQuote测试",
+		Type:        "double_ma",
+		Stocks:      []string{"600000"},
+		Params:      map[string]interface{}{},
 		MaxPosition: decimal.NewFromFloat(100000),
 	}
 
@@ -469,4 +469,3 @@ func TestBaseStrategy_Status(t *testing.T) {
 		t.Error("设置后状态应为 ACTIVE")
 	}
 }
-

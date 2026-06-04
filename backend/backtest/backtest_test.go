@@ -194,4 +194,3 @@ func TestBacktestEngine_OrganizeByDate(t *testing.T) {
 		t.Errorf("应组织出2天的数据, 实际 %d 天", len(result))
 	}
 }
-

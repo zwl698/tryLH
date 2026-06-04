@@ -37,10 +37,10 @@ type QuoteCallback func(quote models.StockQuote)
 
 // SinaProvider 新浪行情数据源
 type SinaProvider struct {
-	client   *resty.Client
-	logger   *zap.Logger
-	cache    map[string]models.StockQuote
-	mu       sync.RWMutex
+	client    *resty.Client
+	logger    *zap.Logger
+	cache     map[string]models.StockQuote
+	mu        sync.RWMutex
 	callbacks []QuoteCallback
 }
 
@@ -322,12 +322,12 @@ func (p *TencentProvider) Subscribe(ctx context.Context, stockCodes []string) er
 
 // MarketService 行情服务 - 统一管理行情数据
 type MarketService struct {
-	provider   DataProvider
-	logger     *zap.Logger
+	provider      DataProvider
+	logger        *zap.Logger
 	subscriptions map[string]bool
-	quoteChan  chan models.StockQuote
-	mu         sync.RWMutex
-	stopCh     chan struct{}
+	quoteChan     chan models.StockQuote
+	mu            sync.RWMutex
+	stopCh        chan struct{}
 }
 
 // NewMarketService 创建行情服务
@@ -659,4 +659,3 @@ func safeInt64(s string) int64 {
 	}
 	return n
 }
-

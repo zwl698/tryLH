@@ -21,11 +21,11 @@ import (
 // 这是最经典的技术分析策略之一，适合趋势明显的市场
 type DoubleMAStrategy struct {
 	BaseStrategy
-	shortPeriod  int           // 短期均线周期
-	longPeriod   int           // 长期均线周期
-	maType       string        // 均线类型: SMA, EMA
-	history      map[string][]models.KLine // 历史K线
-	lastCross    map[string]string         // 上次交叉状态: golden, death, none
+	shortPeriod int                       // 短期均线周期
+	longPeriod  int                       // 长期均线周期
+	maType      string                    // 均线类型: SMA, EMA
+	history     map[string][]models.KLine // 历史K线
+	lastCross   map[string]string         // 上次交叉状态: golden, death, none
 }
 
 // NewDoubleMAStrategy 创建双均线策略
@@ -194,14 +194,14 @@ func (s *DoubleMAStrategy) calcVolume(price decimal.Decimal) int64 {
 // 这是理查德·丹尼斯的海龟交易法，80年代最著名的交易系统
 type TurtleStrategy struct {
 	BaseStrategy
-	entryPeriod  int           // 入场通道周期
-	exitPeriod   int           // 出场通道周期
-	atrPeriod    int           // ATR周期
-	riskPct      float64       // 每笔风险比例
-	history      map[string][]models.KLine
-	entries      map[string]decimal.Decimal // 入场价格
-	stopLoss     map[string]decimal.Decimal // 止损价格
-	units        map[string]int             // 持仓单位数
+	entryPeriod int     // 入场通道周期
+	exitPeriod  int     // 出场通道周期
+	atrPeriod   int     // ATR周期
+	riskPct     float64 // 每笔风险比例
+	history     map[string][]models.KLine
+	entries     map[string]decimal.Decimal // 入场价格
+	stopLoss    map[string]decimal.Decimal // 止损价格
+	units       map[string]int             // 持仓单位数
 }
 
 // NewTurtleStrategy 创建海龟策略
@@ -442,21 +442,21 @@ func trueRange(current, prev models.KLine) decimal.Decimal {
 // 学术研究表明，3-12个月的动量效应在A股市场显著存在
 type MomentumStrategy struct {
 	BaseStrategy
-	lookbackPeriod  int     // 回望期
-	holdingPeriod   int     // 持有期
-	topN            int     // 选择前N只
+	lookbackPeriod    int     // 回望期
+	holdingPeriod     int     // 持有期
+	topN              int     // 选择前N只
 	momentumThreshold float64 // 动量阈值
-	history         map[string][]models.KLine
-	entryDates      map[string]int // 入场后的天数
-	momentumScores  map[string]decimal.Decimal
+	history           map[string][]models.KLine
+	entryDates        map[string]int // 入场后的天数
+	momentumScores    map[string]decimal.Decimal
 }
 
 // NewMomentumStrategy 创建动量策略
 func NewMomentumStrategy(config models.StrategyConfig, logger *zap.Logger) *MomentumStrategy {
 	s := &MomentumStrategy{
-		BaseStrategy: NewBaseStrategy(config, logger),
-		history:      make(map[string][]models.KLine),
-		entryDates:   make(map[string]int),
+		BaseStrategy:   NewBaseStrategy(config, logger),
+		history:        make(map[string][]models.KLine),
+		entryDates:     make(map[string]int),
 		momentumScores: make(map[string]decimal.Decimal),
 	}
 	s.lookbackPeriod = s.getIntParam("lookback_period", 20)
@@ -752,12 +752,12 @@ func sqrt(x float64) float64 {
 // 这是A股散户最常用的自动化策略之一
 type GridStrategy struct {
 	BaseStrategy
-	upperPrice  float64 // 网格上限价
-	lowerPrice  float64 // 网格下限价
-	gridCount   int     // 网格数量
-	gridVolume  int64   // 每格交易量
-	grids       map[string][]gridLevel // 网格层级
-	positions   map[string]int64       // 每只股票持仓量
+	upperPrice float64                // 网格上限价
+	lowerPrice float64                // 网格下限价
+	gridCount  int                    // 网格数量
+	gridVolume int64                  // 每格交易量
+	grids      map[string][]gridLevel // 网格层级
+	positions  map[string]int64       // 每只股票持仓量
 }
 
 type gridLevel struct {
@@ -771,8 +771,8 @@ type gridLevel struct {
 func NewGridStrategy(config models.StrategyConfig, logger *zap.Logger) *GridStrategy {
 	s := &GridStrategy{
 		BaseStrategy: NewBaseStrategy(config, logger),
-		grids:       make(map[string][]gridLevel),
-		positions:   make(map[string]int64),
+		grids:        make(map[string][]gridLevel),
+		positions:    make(map[string]int64),
 	}
 	s.upperPrice = s.getFloatParam("upper_price", 0)
 	s.lowerPrice = s.getFloatParam("lower_price", 0)
@@ -898,4 +898,3 @@ func (s *GridStrategy) checkGrid(code string, currentPrice decimal.Decimal) ([]m
 	s.grids[code] = grids
 	return signals, nil
 }
-

@@ -270,4 +270,3 @@ func TestContainsStock(t *testing.T) {
 		t.Error("不应包含 999999")
 	}
 }
-

@@ -14,13 +14,13 @@ import (
 // 通过迅投xtquant的miniQmt进行交易
 // 需要安装miniQmt客户端并开启交易服务
 type XTQuantBroker struct {
-	loggedIn bool
-	account  *models.Account
-	orders   map[string]*models.Order
+	loggedIn  bool
+	account   *models.Account
+	orders    map[string]*models.Order
 	positions map[string]*models.Position
-	config   models.BrokerConfig
-	client   *resty.Client
-	logger   *zap.Logger
+	config    models.BrokerConfig
+	client    *resty.Client
+	logger    *zap.Logger
 	sessionID string
 }
 
@@ -173,12 +173,12 @@ func (b *XTQuantBroker) SubmitOrder(ctx context.Context, order *models.Order) (*
 	resp, err := b.client.R().
 		SetHeader("X-Session-ID", b.sessionID).
 		SetBody(map[string]interface{}{
-			"stock_code":  order.StockCode,
-			"market":      order.Market,
-			"side":        side,
-			"order_type":  orderType,
-			"price":       order.Price.String(),
-			"volume":      order.Volume,
+			"stock_code": order.StockCode,
+			"market":     order.Market,
+			"side":       side,
+			"order_type": orderType,
+			"price":      order.Price.String(),
+			"volume":     order.Volume,
 		}).
 		SetResult(map[string]interface{}{}).
 		Post("/api/order")
@@ -226,4 +226,3 @@ func (b *XTQuantBroker) GetOrder(ctx context.Context, orderID string) (*models.O
 	_ = resp
 	return nil, nil
 }
-

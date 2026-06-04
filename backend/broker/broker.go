@@ -35,22 +35,22 @@ type Broker interface {
 
 // SimulatedBroker 模拟券商 - 用于开发测试和回测
 type SimulatedBroker struct {
-	mu       sync.RWMutex
-	loggedIn bool
-	account  *models.Account
-	orders   map[string]*models.Order
+	mu        sync.RWMutex
+	loggedIn  bool
+	account   *models.Account
+	orders    map[string]*models.Order
 	positions map[string]*models.Position
-	config   models.BrokerConfig
-	logger   *zap.Logger
+	config    models.BrokerConfig
+	logger    *zap.Logger
 }
 
 // NewSimulatedBroker 创建模拟券商
 func NewSimulatedBroker(cfg models.BrokerConfig, logger *zap.Logger) *SimulatedBroker {
 	return &SimulatedBroker{
-		config:   cfg,
-		orders:   make(map[string]*models.Order),
+		config:    cfg,
+		orders:    make(map[string]*models.Order),
 		positions: make(map[string]*models.Position),
-		logger:   logger,
+		logger:    logger,
 	}
 }
 
@@ -375,4 +375,3 @@ func (b *SimulatedBroker) getOrderList() []models.Order {
 	}
 	return result
 }
-

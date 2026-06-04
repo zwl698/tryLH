@@ -86,7 +86,7 @@ func (b *CSCBroker) Login(ctx context.Context) error {
 			"account_id": b.config.AccountID,
 			"password":   b.config.Password,
 			"mac_addr":   "00:00:00:00:00:00", // 终端MAC地址
-			"ip_addr":    "127.0.0.1",          // 终端IP地址
+			"ip_addr":    "127.0.0.1",         // 终端IP地址
 		}).
 		SetResult(map[string]interface{}{}).
 		Post("/auth/login")
@@ -261,8 +261,8 @@ func (b *CSCBroker) SubmitOrder(ctx context.Context, order *models.Order) (*mode
 
 	// 中信建投订单方向编码
 	sideMap := map[models.OrderSide]int{
-		models.OrderSideBuy:  1,  // 买入
-		models.OrderSideSell: 2,  // 卖出
+		models.OrderSideBuy:  1, // 买入
+		models.OrderSideSell: 2, // 卖出
 	}
 
 	// 中信建投订单类型编码
@@ -436,4 +436,3 @@ func parseDecimalFromInterface(v interface{}) decimal.Decimal {
 		return decimal.Zero
 	}
 }
-

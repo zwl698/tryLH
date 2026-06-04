@@ -35,12 +35,12 @@ func corsMiddleware() gin.HandlerFunc {
 
 // Server API服务器
 type Server struct {
-	engine       *strategy.Engine
-	marketSvc    *market.MarketService
-	broker       broker.Broker
-	riskManager  *risk.RiskManager
-	btEngine     *backtest.BacktestEngine
-	logger       *zap.Logger
+	engine      *strategy.Engine
+	marketSvc   *market.MarketService
+	broker      broker.Broker
+	riskManager *risk.RiskManager
+	btEngine    *backtest.BacktestEngine
+	logger      *zap.Logger
 }
 
 // NewServer 创建API服务器
@@ -179,11 +179,11 @@ func (s *Server) getOrders(c *gin.Context) {
 
 func (s *Server) submitOrder(c *gin.Context) {
 	var req struct {
-		StockCode string `json:"stock_code" binding:"required"`
-		Side      string `json:"side" binding:"required"`
-		Type      string `json:"type" binding:"required"`
-		Price     string `json:"price" binding:"required"`
-		Volume    int64  `json:"volume" binding:"required"`
+		StockCode  string `json:"stock_code" binding:"required"`
+		Side       string `json:"side" binding:"required"`
+		Type       string `json:"type" binding:"required"`
+		Price      string `json:"price" binding:"required"`
+		Volume     int64  `json:"volume" binding:"required"`
 		StrategyID string `json:"strategy_id"`
 	}
 
@@ -642,4 +642,3 @@ func generateMockKLines(stockCode string, startDate, endDate time.Time) []models
 
 	return klines
 }
-

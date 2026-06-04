@@ -362,4 +362,3 @@ func TestSimulatedBroker_AddPosition(t *testing.T) {
 		t.Errorf("平均成本不正确: 期望 %s, 实际 %s", expectedAvgCost.String(), positions[0].AvgCost.String())
 	}
 }
-

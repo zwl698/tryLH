@@ -170,10 +170,10 @@ func registerBuiltInStrategies(engine *strategy.Engine, logger *zap.Logger) {
 		Description: "选择过去N日涨幅最大的股票买入（强者恒强），当动量减弱时卖出。学术研究表明3-12个月动量效应在A股显著。",
 		Stocks:      []string{},
 		Params: map[string]interface{}{
-			"lookback_period":     20,
-			"holding_period":      10,
-			"top_n":               3,
-			"momentum_threshold":  0.05,
+			"lookback_period":    20,
+			"holding_period":     10,
+			"top_n":              3,
+			"momentum_threshold": 0.05,
 		},
 		Status:      models.StrategyStatusPaused,
 		MaxPosition: decimal.NewFromFloat(100000),
@@ -382,10 +382,10 @@ func getDefaultConfig() *config.SystemConfig {
 			Format: "console",
 		},
 		Broker: models.BrokerConfig{
-			ID:       "sim_broker_01",
-			Name:     "模拟券商",
-			Type:     "simulated",
-			IsDemo:   true,
+			ID:     "sim_broker_01",
+			Name:   "模拟券商",
+			Type:   "simulated",
+			IsDemo: true,
 		},
 		Market: config.MarketConfig{
 			DataSource:      "sina",
@@ -401,7 +401,7 @@ func getDefaultConfig() *config.SystemConfig {
 			TakeProfitPct:        decimal.NewFromFloat(0.2),
 		},
 		Strategy: config.StrategyGlobalConfig{
-			MaxConcurrent:      10,
+			MaxConcurrent:       10,
 			BacktestInitCapital: 1000000,
 			CommissionRate:      0.0003,
 			StampTaxRate:        0.001,

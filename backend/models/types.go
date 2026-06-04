@@ -56,20 +56,20 @@ const (
 
 // Account 账户信息
 type Account struct {
-	ID           string          `json:"id"`
-	Name         string          `json:"name"`
-	BrokerID     string          `json:"broker_id"`
-	BrokerName   string          `json:"broker_name"`
-	Cash         decimal.Decimal `json:"cash"`          // 可用资金
-	TotalAssets  decimal.Decimal `json:"total_assets"`   // 总资产
-	MarketValue  decimal.Decimal `json:"market_value"`   // 持仓市值
-	FrozenCash   decimal.Decimal `json:"frozen_cash"`    // 冻结资金
-	YesterdayPL  decimal.Decimal `json:"yesterday_pl"`   // 昨日盈亏
-	TodayPL      decimal.Decimal `json:"today_pl"`       // 今日盈亏
-	TotalPL      decimal.Decimal `json:"total_pl"`       // 累计盈亏
-	Positions    []Position      `json:"positions"`
-	Orders       []Order         `json:"orders"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	BrokerID    string          `json:"broker_id"`
+	BrokerName  string          `json:"broker_name"`
+	Cash        decimal.Decimal `json:"cash"`         // 可用资金
+	TotalAssets decimal.Decimal `json:"total_assets"` // 总资产
+	MarketValue decimal.Decimal `json:"market_value"` // 持仓市值
+	FrozenCash  decimal.Decimal `json:"frozen_cash"`  // 冻结资金
+	YesterdayPL decimal.Decimal `json:"yesterday_pl"` // 昨日盈亏
+	TodayPL     decimal.Decimal `json:"today_pl"`     // 今日盈亏
+	TotalPL     decimal.Decimal `json:"total_pl"`     // 累计盈亏
+	Positions   []Position      `json:"positions"`
+	Orders      []Order         `json:"orders"`
+	UpdatedAt   time.Time       `json:"updated_at"`
 }
 
 // ==================== 持仓相关 ====================
@@ -115,26 +115,26 @@ type Order struct {
 
 // StockQuote 实时行情
 type StockQuote struct {
-	StockCode   string          `json:"stock_code"`
-	StockName   string          `json:"stock_name"`
-	Market      MarketType      `json:"market"`
-	Open        decimal.Decimal `json:"open"`
-	High        decimal.Decimal `json:"high"`
-	Low         decimal.Decimal `json:"low"`
-	Close       decimal.Decimal `json:"close"`        // 最新价
-	PreClose    decimal.Decimal `json:"pre_close"`    // 昨收价
-	Volume      int64           `json:"volume"`       // 成交量
-	Amount      decimal.Decimal `json:"amount"`       // 成交额
-	Turnover    decimal.Decimal `json:"turnover"`     // 换手率
-	PE          decimal.Decimal `json:"pe"`           // 市盈率
-	PB          decimal.Decimal `json:"pb"`           // 市净率
-	TotalMV     decimal.Decimal `json:"total_mv"`     // 总市值
-	CircMV      decimal.Decimal `json:"circ_mv"`      // 流通市值
-	BidPrices   [5]decimal.Decimal `json:"bid_prices"` // 买1-5价
-	BidVolumes  [5]int64          `json:"bid_volumes"` // 买1-5量
-	AskPrices   [5]decimal.Decimal `json:"ask_prices"` // 卖1-5价
-	AskVolumes  [5]int64          `json:"ask_volumes"` // 卖1-5量
-	Timestamp   time.Time       `json:"timestamp"`
+	StockCode  string             `json:"stock_code"`
+	StockName  string             `json:"stock_name"`
+	Market     MarketType         `json:"market"`
+	Open       decimal.Decimal    `json:"open"`
+	High       decimal.Decimal    `json:"high"`
+	Low        decimal.Decimal    `json:"low"`
+	Close      decimal.Decimal    `json:"close"`       // 最新价
+	PreClose   decimal.Decimal    `json:"pre_close"`   // 昨收价
+	Volume     int64              `json:"volume"`      // 成交量
+	Amount     decimal.Decimal    `json:"amount"`      // 成交额
+	Turnover   decimal.Decimal    `json:"turnover"`    // 换手率
+	PE         decimal.Decimal    `json:"pe"`          // 市盈率
+	PB         decimal.Decimal    `json:"pb"`          // 市净率
+	TotalMV    decimal.Decimal    `json:"total_mv"`    // 总市值
+	CircMV     decimal.Decimal    `json:"circ_mv"`     // 流通市值
+	BidPrices  [5]decimal.Decimal `json:"bid_prices"`  // 买1-5价
+	BidVolumes [5]int64           `json:"bid_volumes"` // 买1-5量
+	AskPrices  [5]decimal.Decimal `json:"ask_prices"`  // 卖1-5价
+	AskVolumes [5]int64           `json:"ask_volumes"` // 卖1-5量
+	Timestamp  time.Time          `json:"timestamp"`
 }
 
 // KLine K线数据
@@ -157,10 +157,10 @@ type KLine struct {
 type StrategyStatus string
 
 const (
-	StrategyStatusActive    StrategyStatus = "ACTIVE"
-	StrategyStatusPaused    StrategyStatus = "PAUSED"
-	StrategyStatusStopped   StrategyStatus = "STOPPED"
-	StrategyStatusError     StrategyStatus = "ERROR"
+	StrategyStatusActive  StrategyStatus = "ACTIVE"
+	StrategyStatusPaused  StrategyStatus = "PAUSED"
+	StrategyStatusStopped StrategyStatus = "STOPPED"
+	StrategyStatusError   StrategyStatus = "ERROR"
 )
 
 // StrategyConfig 策略配置
@@ -169,50 +169,50 @@ type StrategyConfig struct {
 	Name        string                 `json:"name"`
 	Type        string                 `json:"type"` // 策略类型标识
 	Description string                 `json:"description"`
-	Stocks      []string               `json:"stocks"`       // 策略关注的股票
-	Params      map[string]interface{} `json:"params"`       // 策略参数
+	Stocks      []string               `json:"stocks"` // 策略关注的股票
+	Params      map[string]interface{} `json:"params"` // 策略参数
 	Status      StrategyStatus         `json:"status"`
-	MaxPosition decimal.Decimal        `json:"max_position"`  // 单股最大持仓金额
-	StopLoss    decimal.Decimal        `json:"stop_loss"`     // 止损比例
-	TakeProfit  decimal.Decimal        `json:"take_profit"`   // 止盈比例
+	MaxPosition decimal.Decimal        `json:"max_position"` // 单股最大持仓金额
+	StopLoss    decimal.Decimal        `json:"stop_loss"`    // 止损比例
+	TakeProfit  decimal.Decimal        `json:"take_profit"`  // 止盈比例
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
 }
 
 // Signal 交易信号
 type Signal struct {
-	StrategyID  string          `json:"strategy_id"`
-	StockCode   string          `json:"stock_code"`
-	StockName   string          `json:"stock_name"`
-	Side        OrderSide       `json:"side"`
-	Type        OrderType       `json:"type"`
-	Price       decimal.Decimal `json:"price"`
-	Volume      int64           `json:"volume"`
-	Reason      string          `json:"reason"`
-	Timestamp   time.Time       `json:"timestamp"`
+	StrategyID string          `json:"strategy_id"`
+	StockCode  string          `json:"stock_code"`
+	StockName  string          `json:"stock_name"`
+	Side       OrderSide       `json:"side"`
+	Type       OrderType       `json:"type"`
+	Price      decimal.Decimal `json:"price"`
+	Volume     int64           `json:"volume"`
+	Reason     string          `json:"reason"`
+	Timestamp  time.Time       `json:"timestamp"`
 }
 
 // ==================== 回测相关 ====================
 
 // BacktestResult 回测结果
 type BacktestResult struct {
-	StrategyID      string          `json:"strategy_id"`
-	StrategyName    string          `json:"strategy_name"`
-	StartDate       time.Time       `json:"start_date"`
-	EndDate         time.Time       `json:"end_date"`
-	InitialCapital  decimal.Decimal `json:"initial_capital"`
-	FinalCapital    decimal.Decimal `json:"final_capital"`
-	TotalReturn     decimal.Decimal `json:"total_return"`
-	AnnualReturn    decimal.Decimal `json:"annual_return"`
-	MaxDrawdown     decimal.Decimal `json:"max_drawdown"`
-	SharpeRatio     decimal.Decimal `json:"sharpe_ratio"`
-	WinRate         decimal.Decimal `json:"win_rate"`
-	ProfitFactor    decimal.Decimal `json:"profit_factor"`
-	TotalTrades     int             `json:"total_trades"`
-	WinTrades       int             `json:"win_trades"`
-	LossTrades      int             `json:"loss_trades"`
-	Trades          []BacktestTrade `json:"trades"`
-	DailyEquity     []EquityPoint   `json:"daily_equity"`
+	StrategyID     string          `json:"strategy_id"`
+	StrategyName   string          `json:"strategy_name"`
+	StartDate      time.Time       `json:"start_date"`
+	EndDate        time.Time       `json:"end_date"`
+	InitialCapital decimal.Decimal `json:"initial_capital"`
+	FinalCapital   decimal.Decimal `json:"final_capital"`
+	TotalReturn    decimal.Decimal `json:"total_return"`
+	AnnualReturn   decimal.Decimal `json:"annual_return"`
+	MaxDrawdown    decimal.Decimal `json:"max_drawdown"`
+	SharpeRatio    decimal.Decimal `json:"sharpe_ratio"`
+	WinRate        decimal.Decimal `json:"win_rate"`
+	ProfitFactor   decimal.Decimal `json:"profit_factor"`
+	TotalTrades    int             `json:"total_trades"`
+	WinTrades      int             `json:"win_trades"`
+	LossTrades     int             `json:"loss_trades"`
+	Trades         []BacktestTrade `json:"trades"`
+	DailyEquity    []EquityPoint   `json:"daily_equity"`
 }
 
 // BacktestTrade 回测交易记录
@@ -276,18 +276,17 @@ type RiskConfig struct {
 
 // BrokerConfig 券商配置
 type BrokerConfig struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"` // simulated, xtquant, csc, cj, etc.
-	APIURL     string `json:"api_url"`
-	AccountID  string `json:"account_id"`
-	Password   string `json:"password"`
-	CaPath     string `json:"ca_path"`
-	CertPath   string `json:"cert_path"`
-	IsDemo     bool   `json:"is_demo"`
-	CommType   string `json:"comm_type"`   // 通信方式: http, tcp, dll
-	AppKey     string `json:"app_key"`     // 券商应用Key
-	AppSecret  string `json:"app_secret"`  // 券商应用Secret
-	ExtConfig  map[string]string `json:"ext_config"` // 扩展配置
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Type      string            `json:"type"` // simulated, xtquant, csc, cj, etc.
+	APIURL    string            `json:"api_url"`
+	AccountID string            `json:"account_id"`
+	Password  string            `json:"password"`
+	CaPath    string            `json:"ca_path"`
+	CertPath  string            `json:"cert_path"`
+	IsDemo    bool              `json:"is_demo"`
+	CommType  string            `json:"comm_type"`  // 通信方式: http, tcp, dll
+	AppKey    string            `json:"app_key"`    // 券商应用Key
+	AppSecret string            `json:"app_secret"` // 券商应用Secret
+	ExtConfig map[string]string `json:"ext_config"` // 扩展配置
 }
-

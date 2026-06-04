@@ -200,4 +200,3 @@ func TestParseSinaKLines(t *testing.T) {
 		t.Errorf("K线开盘价不正确: %s", klines[0].Open.String())
 	}
 }
-

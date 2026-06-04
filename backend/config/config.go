@@ -14,12 +14,12 @@ import (
 
 // SystemConfig 系统配置
 type SystemConfig struct {
-	Server   ServerConfig   `yaml:"server"`
-	Database DatabaseConfig `yaml:"database"`
-	Log      LogConfig      `yaml:"log"`
-	Broker   models.BrokerConfig `yaml:"broker"`
-	Market   MarketConfig   `yaml:"market"`
-	Risk     models.RiskConfig   `yaml:"risk"`
+	Server   ServerConfig         `yaml:"server"`
+	Database DatabaseConfig       `yaml:"database"`
+	Log      LogConfig            `yaml:"log"`
+	Broker   models.BrokerConfig  `yaml:"broker"`
+	Market   MarketConfig         `yaml:"market"`
+	Risk     models.RiskConfig    `yaml:"risk"`
 	Strategy StrategyGlobalConfig `yaml:"strategy"`
 }
 
@@ -42,26 +42,26 @@ type DatabaseConfig struct {
 
 // LogConfig 日志配置
 type LogConfig struct {
-	Level  string `yaml:"level"` // debug, info, warn, error
+	Level  string `yaml:"level"`  // debug, info, warn, error
 	Format string `yaml:"format"` // json, console
 	Path   string `yaml:"path"`
 }
 
 // MarketConfig 行情配置
 type MarketConfig struct {
-	DataSource string `yaml:"data_source"` // sina, tencent, eastmoney
-	RefreshInterval int `yaml:"refresh_interval"` // 刷新间隔(秒)
-	WSEnabled  bool   `yaml:"ws_enabled"`
-	WSURL      string `yaml:"ws_url"`
+	DataSource      string `yaml:"data_source"`      // sina, tencent, eastmoney
+	RefreshInterval int    `yaml:"refresh_interval"` // 刷新间隔(秒)
+	WSEnabled       bool   `yaml:"ws_enabled"`
+	WSURL           string `yaml:"ws_url"`
 }
 
 // StrategyGlobalConfig 策略全局配置
 type StrategyGlobalConfig struct {
-	MaxConcurrent int `yaml:"max_concurrent"` // 最大并发策略数
+	MaxConcurrent       int     `yaml:"max_concurrent"` // 最大并发策略数
 	BacktestInitCapital float64 `yaml:"backtest_init_capital"`
-	CommissionRate float64 `yaml:"commission_rate"` // 佣金费率
-	StampTaxRate   float64 `yaml:"stamp_tax_rate"`  // 印花税费率
-	Slippage       float64 `yaml:"slippage"`        // 滑点
+	CommissionRate      float64 `yaml:"commission_rate"` // 佣金费率
+	StampTaxRate        float64 `yaml:"stamp_tax_rate"`  // 印花税费率
+	Slippage            float64 `yaml:"slippage"`        // 滑点
 }
 
 var (
@@ -209,4 +209,3 @@ func setDefaults(cfg *SystemConfig) {
 func decimalFromFloat(f float64) decimal.Decimal {
 	return decimal.NewFromFloat(f)
 }
-

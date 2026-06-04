@@ -155,4 +155,3 @@ func TestDecimalFromFloat(t *testing.T) {
 		t.Errorf("decimalFromFloat(0.3) = %s, 期望 0.3", d.String())
 	}
 }
-

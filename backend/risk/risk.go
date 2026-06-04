@@ -13,15 +13,15 @@ import (
 
 // RiskManager 风控管理器
 type RiskManager struct {
-	mu        sync.RWMutex
-	config    models.RiskConfig
-	logger    *zap.Logger
-	events    []models.RiskEvent
-	dailyPL   decimal.Decimal    // 当日盈亏
-	dailyTrades int              // 当日交易次数
-	peakEquity decimal.Decimal   // 权益峰值
-	account   *models.Account    // 账户快照
-	callbacks []RiskCallback     // 风控回调
+	mu          sync.RWMutex
+	config      models.RiskConfig
+	logger      *zap.Logger
+	events      []models.RiskEvent
+	dailyPL     decimal.Decimal // 当日盈亏
+	dailyTrades int             // 当日交易次数
+	peakEquity  decimal.Decimal // 权益峰值
+	account     *models.Account // 账户快照
+	callbacks   []RiskCallback  // 风控回调
 }
 
 // RiskCallback 风控回调函数
@@ -30,9 +30,9 @@ type RiskCallback func(event models.RiskEvent)
 // NewRiskManager 创建风控管理器
 func NewRiskManager(config models.RiskConfig, logger *zap.Logger) *RiskManager {
 	return &RiskManager{
-		config:  config,
-		logger:  logger,
-		events:  make([]models.RiskEvent, 0),
+		config: config,
+		logger: logger,
+		events: make([]models.RiskEvent, 0),
 	}
 }
 
@@ -304,4 +304,3 @@ func (r *RiskManager) GetConfig() models.RiskConfig {
 	defer r.mu.RUnlock()
 	return r.config
 }
-

@@ -31,17 +31,17 @@ func NewBacktestEngine(commissionRate, stampTaxRate, slippage float64, logger *z
 
 // BacktestState 回测状态
 type BacktestState struct {
-	Cash         decimal.Decimal
-	Positions    map[string]*backtestPosition
-	Trades       []models.BacktestTrade
-	DailyEquity  []models.EquityPoint
-	InitialCash  decimal.Decimal
-	PeakEquity   decimal.Decimal
-	MaxDrawdown  decimal.Decimal
-	DateTrades   int
-	TotalTrades  int
-	WinTrades    int
-	LossTrades   int
+	Cash        decimal.Decimal
+	Positions   map[string]*backtestPosition
+	Trades      []models.BacktestTrade
+	DailyEquity []models.EquityPoint
+	InitialCash decimal.Decimal
+	PeakEquity  decimal.Decimal
+	MaxDrawdown decimal.Decimal
+	DateTrades  int
+	TotalTrades int
+	WinTrades   int
+	LossTrades  int
 }
 
 type backtestPosition struct {
@@ -497,4 +497,3 @@ func exp(x float64) float64 {
 	}
 	return result
 }
-

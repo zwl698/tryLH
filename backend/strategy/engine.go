@@ -405,4 +405,3 @@ func containsStock(stocks []string, code string) bool {
 	}
 	return false
 }
-

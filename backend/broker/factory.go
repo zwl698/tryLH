@@ -24,4 +24,3 @@ func NewBroker(cfg models.BrokerConfig, logger *zap.Logger) (Broker, error) {
 		return nil, fmt.Errorf("不支持的券商类型: %s（支持: simulated, xtquant, csc, cj）", cfg.Type)
 	}
 }
-

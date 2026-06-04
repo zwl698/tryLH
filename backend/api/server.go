@@ -527,8 +527,12 @@ func (s *Server) runBacktest(c *gin.Context) {
 	for _, code := range req.Stocks {
 		klineData, err := s.marketSvc.GetKLines(c.Request.Context(), code, "day", 500)
 		if err != nil {
-			s.logger.Warn("获取K线数据失败，使用模拟数据", zap.String("stock", code), zap.Error(err))
-			klineData = generateMockKLines(code, startDate, endDate)
+			s.responseError(c, http.StatusBadGateway, "获取真实K线数据失败: "+code+" "+err.Error())
+			return
+		}
+		if len(klineData) == 0 {
+			s.responseError(c, http.StatusBadGateway, "获取真实K线数据失败: "+code+" K线数据为空")
+			return
 		}
 		klines[code] = klineData
 	}

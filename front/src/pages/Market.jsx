@@ -52,6 +52,12 @@ export default function MarketPage() {
     }
   }, [favorites]);
 
+  useEffect(() => {
+    if (selectedStock?.stock_code) {
+      fetchKLine(selectedStock.stock_code);
+    }
+  }, [klinePeriod]);
+
   const fetchIndexQuotes = async () => {
     try {
       const results = {};
@@ -350,4 +356,3 @@ export default function MarketPage() {
     </div>
   );
 }
-

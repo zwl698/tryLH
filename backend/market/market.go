@@ -3,15 +3,20 @@ package market
 import (
 	"aqsystem/models"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // DataProvider 行情数据提供者接口
@@ -101,7 +106,8 @@ func (p *SinaProvider) GetQuotes(ctx context.Context, stockCodes []string) (map[
 	}
 
 	// 解析新浪行情数据
-	lines := strings.Split(resp.String(), "\n")
+	body := decodeMarketResponse(resp.Body())
+	lines := strings.Split(body, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -114,9 +120,14 @@ func (p *SinaProvider) GetQuotes(ctx context.Context, stockCodes []string) (map[
 			continue
 		}
 
-		// 映射回原始代码
+		// 映射回原始代码。指数代码如 sh000001 解析后也是 000001，
+		// 不能再按普通股票代码推断市场，否则会误映射成 sz000001。
 		originalCode := quote.StockCode
-		if mapped, ok := codeMap[toSinaCode(quote.StockCode)]; ok {
+		if rawCode := extractSinaRawCode(line); rawCode != "" {
+			if mapped, ok := codeMap[rawCode]; ok {
+				originalCode = mapped
+			}
+		} else if mapped, ok := codeMap[toSinaCode(quote.StockCode)]; ok {
 			originalCode = mapped
 		}
 		quote.StockCode = originalCode
@@ -139,9 +150,23 @@ func (p *SinaProvider) GetQuotes(ctx context.Context, stockCodes []string) (map[
 
 // GetKLines 获取K线数据
 func (p *SinaProvider) GetKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
-	// 新浪K线API
-	sinaCode := toSinaCode(stockCode)
-	periodMap := map[string]string{
+	klines, err := p.getEastMoneyKLines(ctx, stockCode, period, count)
+	if err == nil && len(klines) > 0 {
+		return klines, nil
+	}
+	if err != nil {
+		p.logger.Warn("东方财富K线获取失败，尝试新浪K线接口", zap.String("stock", stockCode), zap.Error(err))
+	}
+
+	klines, err = p.getTencentKLines(ctx, stockCode, period, count)
+	if err == nil && len(klines) > 0 {
+		return klines, nil
+	}
+	if err != nil {
+		p.logger.Warn("腾讯K线获取失败，尝试新浪K线接口", zap.String("stock", stockCode), zap.Error(err))
+	}
+
+	sinaPeriod, ok := map[string]string{
 		"1m":    "5",
 		"5m":    "15",
 		"15m":   "30",
@@ -150,13 +175,12 @@ func (p *SinaProvider) GetKLines(ctx context.Context, stockCode string, period s
 		"day":   "1440",
 		"week":  "10080",
 		"month": "43200",
-	}
-
-	sinaPeriod, ok := periodMap[period]
+	}[period]
 	if !ok {
 		return nil, fmt.Errorf("不支持的K线周期: %s", period)
 	}
 
+	sinaCode := toSinaCode(stockCode)
 	url := fmt.Sprintf("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=%s&scale=%s&ma=no&datalen=%d",
 		sinaCode, sinaPeriod, count)
 
@@ -165,12 +189,140 @@ func (p *SinaProvider) GetKLines(ctx context.Context, stockCode string, period s
 		return nil, fmt.Errorf("获取K线数据失败: %w", err)
 	}
 
-	klines, err := parseSinaKLines(resp.String(), stockCode, period)
+	klines, err = parseSinaKLines(decodeMarketResponse(resp.Body()), stockCode, period)
 	if err != nil {
 		return nil, err
 	}
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("新浪K线数据为空")
+	}
 
 	return klines, nil
+}
+
+func (p *SinaProvider) getEastMoneyKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
+	klt, ok := map[string]string{
+		"1m":    "1",
+		"5m":    "5",
+		"15m":   "15",
+		"30m":   "30",
+		"60m":   "60",
+		"day":   "101",
+		"week":  "102",
+		"month": "103",
+	}[period]
+	if !ok {
+		return nil, fmt.Errorf("不支持的K线周期: %s", period)
+	}
+
+	if count <= 0 {
+		count = 100
+	}
+
+	end := "20500101"
+	allKLines := make([]models.KLine, 0, count)
+	seen := make(map[string]bool)
+
+	for len(allKLines) < count {
+		batchSize := min(100, count-len(allKLines))
+		batch, err := p.fetchEastMoneyKLineBatch(ctx, stockCode, period, klt, end, batchSize)
+		if err != nil {
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+
+		for _, kline := range batch {
+			key := kline.Timestamp.Format("2006-01-02")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			allKLines = append(allKLines, kline)
+		}
+
+		earliest := batch[0].Timestamp
+		for _, kline := range batch[1:] {
+			if kline.Timestamp.Before(earliest) {
+				earliest = kline.Timestamp
+			}
+		}
+		nextEnd := earliest.AddDate(0, 0, -1).Format("20060102")
+		if nextEnd == end {
+			break
+		}
+		end = nextEnd
+	}
+
+	sort.Slice(allKLines, func(i, j int) bool {
+		return allKLines[i].Timestamp.Before(allKLines[j].Timestamp)
+	})
+
+	if len(allKLines) > count {
+		allKLines = allKLines[len(allKLines)-count:]
+	}
+	if len(allKLines) == 0 {
+		return nil, fmt.Errorf("东方财富K线数据为空")
+	}
+	return allKLines, nil
+}
+
+func (p *SinaProvider) fetchEastMoneyKLineBatch(ctx context.Context, stockCode string, period string, klt string, end string, count int) ([]models.KLine, error) {
+	url := "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+	resp, err := p.client.R().
+		SetContext(ctx).
+		SetHeader("User-Agent", "Mozilla/5.0").
+		SetHeader("Referer", "https://quote.eastmoney.com/").
+		SetQueryParams(map[string]string{
+			"secid":   toEastMoneySecID(stockCode),
+			"fields1": "f1,f2,f3,f4,f5,f6",
+			"fields2": "f51,f52,f53,f54,f55,f56,f57",
+			"klt":     klt,
+			"fqt":     "1",
+			"end":     end,
+			"lmt":     strconv.Itoa(count),
+		}).
+		Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("请求东方财富K线失败: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("东方财富K线返回异常，状态码: %d", resp.StatusCode())
+	}
+
+	return parseEastMoneyKLines(resp.String(), normalizeStockCode(stockCode), period)
+}
+
+func (p *SinaProvider) getTencentKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
+	txPeriod, ok := map[string]string{
+		"day":   "day",
+		"week":  "week",
+		"month": "month",
+	}[period]
+	if !ok {
+		return nil, fmt.Errorf("腾讯K线不支持周期: %s", period)
+	}
+	if count <= 0 {
+		count = 100
+	}
+
+	txCode := toSinaCode(stockCode)
+	url := "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+	resp, err := p.client.R().
+		SetContext(ctx).
+		SetHeader("User-Agent", "Mozilla/5.0").
+		SetHeader("Referer", "https://gu.qq.com/").
+		SetQueryParam("param", fmt.Sprintf("%s,%s,,,%d,qfq", txCode, txPeriod, count)).
+		Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("请求腾讯K线失败: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("腾讯K线返回异常，状态码: %d", resp.StatusCode())
+	}
+
+	return parseTencentKLines(resp.String(), txCode, normalizeStockCode(stockCode), period)
 }
 
 // GetIndexQuote 获取大盘指数行情
@@ -259,8 +411,11 @@ func (p *TencentProvider) GetQuotes(ctx context.Context, stockCodes []string) (m
 
 	// 转换为腾讯格式: sh600000, sz000001
 	txCodes := make([]string, 0, len(stockCodes))
+	codeMap := make(map[string]string)
 	for _, code := range stockCodes {
-		txCodes = append(txCodes, toSinaCode(code)) // 格式与新浪相同
+		txCode := toSinaCode(code)
+		txCodes = append(txCodes, txCode) // 格式与新浪相同
+		codeMap[txCode] = code
 	}
 
 	url := "https://qt.gtimg.cn/q=" + strings.Join(txCodes, ",")
@@ -270,7 +425,8 @@ func (p *TencentProvider) GetQuotes(ctx context.Context, stockCodes []string) (m
 		return nil, fmt.Errorf("请求腾讯行情失败: %w", err)
 	}
 
-	lines := strings.Split(resp.String(), "\n")
+	body := decodeMarketResponse(resp.Body())
+	lines := strings.Split(body, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || !strings.Contains(line, "~") {
@@ -283,9 +439,17 @@ func (p *TencentProvider) GetQuotes(ctx context.Context, stockCodes []string) (m
 			continue
 		}
 
-		result[quote.StockCode] = *quote
+		originalCode := quote.StockCode
+		if rawCode := extractTencentRawCode(line); rawCode != "" {
+			if mapped, ok := codeMap[rawCode]; ok {
+				originalCode = mapped
+			}
+		}
+		quote.StockCode = originalCode
+
+		result[originalCode] = *quote
 		p.mu.Lock()
-		p.cache[quote.StockCode] = *quote
+		p.cache[originalCode] = *quote
 		p.mu.Unlock()
 	}
 
@@ -301,7 +465,16 @@ func (p *TencentProvider) GetKLines(ctx context.Context, stockCode string, perio
 
 // GetIndexQuote 获取指数行情
 func (p *TencentProvider) GetIndexQuote(ctx context.Context, indexCode string) (*models.StockQuote, error) {
-	sinaCode := toSinaCode(indexCode)
+	indexCodes := map[string]string{
+		"000001": "sh000001",
+		"399001": "sz399001",
+		"399006": "sz399006",
+	}
+
+	sinaCode, ok := indexCodes[indexCode]
+	if !ok {
+		sinaCode = toSinaCode(indexCode)
+	}
 	quotes, err := p.GetQuotes(ctx, []string{sinaCode})
 	if err != nil {
 		return nil, err
@@ -454,6 +627,7 @@ func (s *MarketService) pollQuotes(ctx context.Context) {
 // toSinaCode 将股票代码转换为新浪格式
 func toSinaCode(code string) string {
 	code = strings.TrimSpace(code)
+	code = strings.ToLower(code)
 
 	// 已经是新浪格式
 	if strings.HasPrefix(code, "sh") || strings.HasPrefix(code, "sz") {
@@ -461,8 +635,8 @@ func toSinaCode(code string) string {
 	}
 
 	// 纯数字代码
-	code = strings.TrimPrefix(code, "SH")
-	code = strings.TrimPrefix(code, "SZ")
+	code = strings.TrimPrefix(code, "sh")
+	code = strings.TrimPrefix(code, "sz")
 
 	if len(code) != 6 {
 		return code
@@ -474,6 +648,44 @@ func toSinaCode(code string) string {
 	}
 	// 深圳: 0开头, 3开头
 	return "sz" + code
+}
+
+func normalizeStockCode(code string) string {
+	code = strings.TrimSpace(strings.ToLower(code))
+	code = strings.TrimPrefix(code, "sh")
+	code = strings.TrimPrefix(code, "sz")
+	return code
+}
+
+func toEastMoneySecID(code string) string {
+	sinaCode := toSinaCode(code)
+	if strings.HasPrefix(sinaCode, "sh") {
+		return "1." + strings.TrimPrefix(sinaCode, "sh")
+	}
+	return "0." + strings.TrimPrefix(sinaCode, "sz")
+}
+
+func extractSinaRawCode(line string) string {
+	parts := strings.SplitN(line, "=\"", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	return strings.TrimPrefix(strings.TrimSpace(parts[0]), "var hq_str_")
+}
+
+func extractTencentRawCode(line string) string {
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) == 2 {
+		raw := strings.TrimSpace(parts[0])
+		raw = strings.TrimPrefix(raw, "v_")
+		return raw
+	}
+
+	fields := strings.Split(line, "~")
+	if len(fields) > 0 {
+		return strings.TrimPrefix(fields[0], "v_")
+	}
+	return ""
 }
 
 // parseSinaQuote 解析新浪行情数据
@@ -581,6 +793,10 @@ func parseTencentQuote(line string) (*models.StockQuote, error) {
 
 // parseSinaKLines 解析新浪K线数据
 func parseSinaKLines(data string, stockCode string, period string) ([]models.KLine, error) {
+	if strings.HasPrefix(strings.TrimSpace(data), "[") {
+		return parseSinaJSONKLines(data, stockCode, period)
+	}
+
 	var klines []models.KLine
 
 	lines := strings.Split(data, "\n")
@@ -614,7 +830,192 @@ func parseSinaKLines(data string, stockCode string, period string) ([]models.KLi
 		klines = append(klines, kline)
 	}
 
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("新浪K线数据为空")
+	}
 	return klines, nil
+}
+
+type sinaKLineItem struct {
+	Day    string `json:"day"`
+	Open   string `json:"open"`
+	High   string `json:"high"`
+	Low    string `json:"low"`
+	Close  string `json:"close"`
+	Volume string `json:"volume"`
+}
+
+func parseSinaJSONKLines(data string, stockCode string, period string) ([]models.KLine, error) {
+	var rows []sinaKLineItem
+	if err := json.Unmarshal([]byte(data), &rows); err != nil {
+		return nil, fmt.Errorf("解析新浪K线JSON失败: %w", err)
+	}
+
+	klines := make([]models.KLine, 0, len(rows))
+	for _, row := range rows {
+		t, err := parseKLineTime(row.Day)
+		if err != nil {
+			continue
+		}
+		klines = append(klines, models.KLine{
+			StockCode: normalizeStockCode(stockCode),
+			Period:    period,
+			Open:      safeDecimal(row.Open),
+			High:      safeDecimal(row.High),
+			Low:       safeDecimal(row.Low),
+			Close:     safeDecimal(row.Close),
+			Volume:    safeInt64(row.Volume),
+			Timestamp: t,
+		})
+	}
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("新浪K线数据为空")
+	}
+	return klines, nil
+}
+
+type tencentKLineResponse struct {
+	Code int                        `json:"code"`
+	Msg  string                     `json:"msg"`
+	Data map[string]json.RawMessage `json:"data"`
+}
+
+func parseTencentKLines(data string, txCode string, stockCode string, period string) ([]models.KLine, error) {
+	var resp tencentKLineResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return nil, fmt.Errorf("解析腾讯K线JSON失败: %w", err)
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("腾讯K线返回异常: %s", resp.Msg)
+	}
+
+	periodKey := map[string]string{
+		"day":   "qfqday",
+		"week":  "qfqweek",
+		"month": "qfqmonth",
+	}[period]
+	rawStock, ok := resp.Data[txCode]
+	if !ok {
+		return nil, fmt.Errorf("腾讯K线数据为空")
+	}
+
+	var stockData map[string]json.RawMessage
+	if err := json.Unmarshal(rawStock, &stockData); err != nil {
+		return nil, fmt.Errorf("解析腾讯K线股票数据失败: %w", err)
+	}
+
+	var rawRows []json.RawMessage
+	if err := json.Unmarshal(stockData[periodKey], &rawRows); err != nil {
+		return nil, fmt.Errorf("解析腾讯K线%s失败: %w", periodKey, err)
+	}
+	if len(rawRows) == 0 {
+		return nil, fmt.Errorf("腾讯K线数据为空")
+	}
+
+	klines := make([]models.KLine, 0, len(rawRows))
+	for _, rawRow := range rawRows {
+		var fields []interface{}
+		if err := json.Unmarshal(rawRow, &fields); err != nil {
+			continue
+		}
+		if len(fields) < 6 {
+			continue
+		}
+
+		t, err := parseKLineTime(jsonValueToString(fields[0]))
+		if err != nil {
+			continue
+		}
+		klines = append(klines, models.KLine{
+			StockCode: stockCode,
+			Period:    period,
+			Open:      safeDecimal(jsonValueToString(fields[1])),
+			Close:     safeDecimal(jsonValueToString(fields[2])),
+			High:      safeDecimal(jsonValueToString(fields[3])),
+			Low:       safeDecimal(jsonValueToString(fields[4])),
+			Volume:    safeDecimal(jsonValueToString(fields[5])).IntPart(),
+			Timestamp: t,
+		})
+	}
+
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("腾讯K线数据为空")
+	}
+	return klines, nil
+}
+
+func jsonValueToString(value interface{}) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	default:
+		return ""
+	}
+}
+
+type eastMoneyKLineResponse struct {
+	Data *struct {
+		KLines []string `json:"klines"`
+	} `json:"data"`
+}
+
+func parseEastMoneyKLines(data string, stockCode string, period string) ([]models.KLine, error) {
+	var resp eastMoneyKLineResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return nil, fmt.Errorf("解析东方财富K线JSON失败: %w", err)
+	}
+	if resp.Data == nil || len(resp.Data.KLines) == 0 {
+		return nil, fmt.Errorf("东方财富K线数据为空")
+	}
+
+	klines := make([]models.KLine, 0, len(resp.Data.KLines))
+	for _, row := range resp.Data.KLines {
+		fields := strings.Split(row, ",")
+		if len(fields) < 6 {
+			continue
+		}
+
+		t, err := parseKLineTime(fields[0])
+		if err != nil {
+			continue
+		}
+
+		kline := models.KLine{
+			StockCode: normalizeStockCode(stockCode),
+			Period:    period,
+			Open:      safeDecimal(fields[1]),
+			Close:     safeDecimal(fields[2]),
+			High:      safeDecimal(fields[3]),
+			Low:       safeDecimal(fields[4]),
+			Volume:    safeInt64(fields[5]),
+			Timestamp: t,
+		}
+		if len(fields) > 6 {
+			kline.Amount = safeDecimal(fields[6])
+		}
+		klines = append(klines, kline)
+	}
+
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("东方财富K线数据为空")
+	}
+	return klines, nil
+}
+
+func parseKLineTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if len(value) >= len("2006-01-02 15:04") {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", value[:len("2006-01-02 15:04")], time.Local); err == nil {
+			return t, nil
+		}
+	}
+	return time.ParseInLocation("2006-01-02", value[:min(len(value), len("2006-01-02"))], time.Local)
 }
 
 // isTradingTime 检查是否在A股交易时间
@@ -658,4 +1059,16 @@ func safeInt64(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+func decodeMarketResponse(body []byte) string {
+	if utf8.Valid(body) {
+		return string(body)
+	}
+
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().String(string(body))
+	if err != nil {
+		return string(body)
+	}
+	return decoded
 }

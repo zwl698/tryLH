@@ -237,7 +237,7 @@ export default function BacktestPage() {
                   <Card size="small" className="stat-card">
                     <Statistic
                       title="总收益率"
-                      value={parseFloat(result.total_return || 0) * 100}
+                      value={parseFloat(result.total_return || 0)}
                       precision={2}
                       suffix="%"
                       valueStyle={{ color: parseFloat(result.total_return || 0) >= 0 ? '#f5222d' : '#52c41a', fontSize: 22 }}
@@ -248,7 +248,7 @@ export default function BacktestPage() {
                   <Card size="small" className="stat-card">
                     <Statistic
                       title="年化收益率"
-                      value={parseFloat(result.annual_return || 0) * 100}
+                      value={parseFloat(result.annual_return || 0)}
                       precision={2}
                       suffix="%"
                       valueStyle={{ color: parseFloat(result.annual_return || 0) >= 0 ? '#f5222d' : '#52c41a', fontSize: 22 }}
@@ -259,7 +259,7 @@ export default function BacktestPage() {
                   <Card size="small" className="stat-card">
                     <Statistic
                       title="最大回撤"
-                      value={parseFloat(result.max_drawdown || 0) * 100}
+                      value={parseFloat(result.max_drawdown || 0)}
                       precision={2}
                       suffix="%"
                       valueStyle={{ color: '#f5222d', fontSize: 22 }}
@@ -282,7 +282,7 @@ export default function BacktestPage() {
               <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
                 <Col xs={8}>
                   <Card size="small" className="stat-card">
-                    <Statistic title="胜率" value={parseFloat(result.win_rate || 0) * 100} precision={1} suffix="%" />
+                    <Statistic title="胜率" value={parseFloat(result.win_rate || 0)} precision={1} suffix="%" />
                   </Card>
                 </Col>
                 <Col xs={8}>
@@ -331,4 +331,3 @@ export default function BacktestPage() {
     </div>
   );
 }
-

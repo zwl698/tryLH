@@ -193,4 +193,9 @@ func TestBacktestEngine_OrganizeByDate(t *testing.T) {
 	if len(result) != 2 {
 		t.Errorf("应组织出2天的数据, 实际 %d 天", len(result))
 	}
+
+	expectedDate := time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local)
+	if _, ok := result[expectedDate]; !ok {
+		t.Errorf("应使用本地自然日作为回测日期: %s", expectedDate)
+	}
 }

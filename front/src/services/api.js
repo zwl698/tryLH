@@ -35,7 +35,10 @@ export const cancelOrder = (id) => api.delete(`/api/v1/trade/order/${id}`);
 
 // ====== 行情接口 ======
 export const getQuote = (code) => api.get(`/api/v1/market/quote/${code}`);
-export const getQuotes = (codes) => api.post('/api/v1/market/quotes', { codes });
+export const getQuotes = async (codes) => {
+  const data = await api.post('/api/v1/market/quotes', { codes });
+  return Array.isArray(data) ? data : Object.values(data || {});
+};
 export const getKLines = (code, period = 'day') => api.get(`/api/v1/market/kline/${code}?period=${period}`);
 export const getIndexQuote = (code) => api.get(`/api/v1/market/index/${code}`);
 export const subscribe = (codes) => api.post('/api/v1/market/subscribe', { codes });
@@ -63,4 +66,3 @@ export const getSystemStatus = () => api.get('/api/v1/system/status');
 export const healthCheck = () => api.get('/health');
 
 export default api;
-

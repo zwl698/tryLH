@@ -8,6 +8,7 @@ BACKEND_PORT=8080
 FRONTEND_PORT=3000
 BACKEND_PID=""
 FRONTEND_PID=""
+OPEN_BROWSER="${OPEN_BROWSER:-1}"
 
 kill_port() {
   local port="$1"
@@ -37,6 +38,22 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+open_frontend() {
+  local url="http://localhost:$FRONTEND_PORT"
+
+  for _ in {1..60}; do
+    if curl -fsS "$url" >/dev/null 2>&1; then
+      if command -v open >/dev/null 2>&1; then
+        open "$url" >/dev/null 2>&1 || true
+      elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "$url" >/dev/null 2>&1 || true
+      fi
+      return
+    fi
+    sleep 1
+  done
+}
 
 if [[ ! -f "$BACKEND_DIR/go.mod" ]]; then
   echo "未找到后端项目: $BACKEND_DIR"
@@ -76,6 +93,10 @@ printf '前端地址: http://localhost:%s\n' "$FRONTEND_PORT"
 echo "按 Ctrl+C 可同时停止前后端。"
 echo
 
+if [[ "$OPEN_BROWSER" != "0" ]]; then
+  open_frontend &
+fi
+
 EXIT_CODE=0
 while true; do
   if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
@@ -93,4 +114,3 @@ done
 
 echo "检测到有服务退出，正在关闭另一项服务..."
 exit "$EXIT_CODE"
-

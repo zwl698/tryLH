@@ -5,6 +5,7 @@ import (
 	"aqsystem/strategy"
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/shopspring/decimal"
@@ -33,6 +34,7 @@ func NewBacktestEngine(commissionRate, stampTaxRate, slippage float64, logger *z
 type BacktestState struct {
 	Cash        decimal.Decimal
 	Positions   map[string]*backtestPosition
+	LastPrices  map[string]decimal.Decimal
 	Trades      []models.BacktestTrade
 	DailyEquity []models.EquityPoint
 	InitialCash decimal.Decimal
@@ -70,6 +72,7 @@ func (e *BacktestEngine) Run(
 		InitialCash: initialCash,
 		PeakEquity:  initialCash,
 		Positions:   make(map[string]*backtestPosition),
+		LastPrices:  make(map[string]decimal.Decimal),
 		Trades:      []models.BacktestTrade{},
 		DailyEquity: []models.EquityPoint{},
 	}
@@ -93,7 +96,16 @@ func (e *BacktestEngine) Run(
 	strategy.SetStatus(models.StrategyStatusActive)
 
 	// 逐日回测
-	for date, dayKlines := range dailyKLines {
+	dates := make([]time.Time, 0, len(dailyKLines))
+	for date := range dailyKLines {
+		dates = append(dates, date)
+	}
+	sort.Slice(dates, func(i, j int) bool {
+		return dates[i].Before(dates[j])
+	})
+
+	for _, date := range dates {
+		dayKlines := dailyKLines[date]
 		state.DateTrades = 0
 
 		for _, kline := range dayKlines {
@@ -245,10 +257,13 @@ func (e *BacktestEngine) calcEquity(state *BacktestState, klines []models.KLine)
 	priceMap := make(map[string]decimal.Decimal)
 	for _, k := range klines {
 		priceMap[k.StockCode] = k.Close
+		state.LastPrices[k.StockCode] = k.Close
 	}
 
 	for _, pos := range state.Positions {
 		if price, ok := priceMap[pos.StockCode]; ok {
+			equity = equity.Add(price.Mul(decimal.NewFromInt(pos.Volume)))
+		} else if price, ok := state.LastPrices[pos.StockCode]; ok {
 			equity = equity.Add(price.Mul(decimal.NewFromInt(pos.Volume)))
 		} else {
 			equity = equity.Add(pos.AvgCost.Mul(decimal.NewFromInt(pos.Volume)))
@@ -284,7 +299,7 @@ func (e *BacktestEngine) organizeByDate(klines map[string][]models.KLine, startD
 
 	for _, stockKlines := range klines {
 		for _, kline := range stockKlines {
-			date := kline.Timestamp.Truncate(24 * time.Hour)
+			date := tradingDate(kline.Timestamp)
 			if date.Before(startDate) || date.After(endDate) {
 				continue
 			}
@@ -295,6 +310,11 @@ func (e *BacktestEngine) organizeByDate(klines map[string][]models.KLine, startD
 	return result
 }
 
+func tradingDate(t time.Time) time.Time {
+	y, m, d := t.In(time.Local).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+}
+
 // generateResult 生成回测结果
 func (e *BacktestEngine) generateResult(
 	s strategy.Strategy,
@@ -303,8 +323,16 @@ func (e *BacktestEngine) generateResult(
 	initialCash decimal.Decimal,
 ) *models.BacktestResult {
 	finalEquity := state.Cash
-	for _, pos := range state.Positions {
-		finalEquity = finalEquity.Add(pos.AvgCost.Mul(decimal.NewFromInt(pos.Volume)))
+	if len(state.DailyEquity) > 0 {
+		finalEquity = state.DailyEquity[len(state.DailyEquity)-1].Equity
+	} else {
+		for _, pos := range state.Positions {
+			price := pos.AvgCost
+			if lastPrice, ok := state.LastPrices[pos.StockCode]; ok {
+				price = lastPrice
+			}
+			finalEquity = finalEquity.Add(price.Mul(decimal.NewFromInt(pos.Volume)))
+		}
 	}
 
 	// 总收益率

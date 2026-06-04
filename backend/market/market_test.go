@@ -121,6 +121,14 @@ func TestParseSinaQuote_InvalidFormat(t *testing.T) {
 	}
 }
 
+func TestExtractSinaRawCode_Index(t *testing.T) {
+	line := `var hq_str_sh000001="上证指数,3000.00,2990.00,3010.00,3020.00,2980.00,0,0,123456,654321,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2024-01-15,15:00:00";`
+	raw := extractSinaRawCode(line)
+	if raw != "sh000001" {
+		t.Fatalf("指数原始代码解析错误: %s", raw)
+	}
+}
+
 func TestParseTencentQuote(t *testing.T) {
 	// 构造腾讯行情格式的数据（字段间用~分隔，至少45个字段）
 	// 字段: 0市场前缀,1股票名称,2股票代码,3收盘价,4昨收,5开盘,6成交量,
@@ -198,5 +206,65 @@ func TestParseSinaKLines(t *testing.T) {
 	}
 	if !klines[0].Open.Equal(decimal.NewFromFloat(15.23)) {
 		t.Errorf("K线开盘价不正确: %s", klines[0].Open.String())
+	}
+}
+
+func TestParseSinaJSONKLines(t *testing.T) {
+	data := `[{"day":"2024-01-15","open":"15.23","high":"15.30","low":"15.15","close":"15.25","volume":"35678900"},{"day":"2024-01-16","open":"15.25","high":"15.35","low":"15.20","close":"15.30","volume":"25678900"}]`
+
+	klines, err := parseSinaKLines(data, "sh600000", "day")
+	if err != nil {
+		t.Fatalf("解析新浪JSON K线失败: %v", err)
+	}
+	if len(klines) != 2 {
+		t.Fatalf("K线数量不正确: 期望 2, 实际 %d", len(klines))
+	}
+	if klines[0].StockCode != "600000" {
+		t.Errorf("K线股票代码不正确: %s", klines[0].StockCode)
+	}
+	if !klines[1].Close.Equal(decimal.NewFromFloat(15.30)) {
+		t.Errorf("K线收盘价不正确: %s", klines[1].Close.String())
+	}
+}
+
+func TestParseEastMoneyKLines(t *testing.T) {
+	data := `{"data":{"klines":["2024-01-15,15.23,15.25,15.30,15.15,35678900,54321.00","2024-01-16,15.25,15.30,15.35,15.20,25678900,44321.00"]}}`
+
+	klines, err := parseEastMoneyKLines(data, "600000", "day")
+	if err != nil {
+		t.Fatalf("解析东方财富K线失败: %v", err)
+	}
+	if len(klines) != 2 {
+		t.Fatalf("K线数量不正确: 期望 2, 实际 %d", len(klines))
+	}
+	if !klines[0].Close.Equal(decimal.NewFromFloat(15.25)) {
+		t.Errorf("K线收盘价不正确: %s", klines[0].Close.String())
+	}
+	if !klines[0].High.Equal(decimal.NewFromFloat(15.30)) {
+		t.Errorf("K线最高价不正确: %s", klines[0].High.String())
+	}
+	if !klines[0].Low.Equal(decimal.NewFromFloat(15.15)) {
+		t.Errorf("K线最低价不正确: %s", klines[0].Low.String())
+	}
+}
+
+func TestParseTencentKLines(t *testing.T) {
+	data := `{"code":0,"msg":"","data":{"sh600519":{"qfqday":[["2026-06-03","1304.000","1281.910","1304.000","1276.000","52477.000"],["2026-06-04","1278.990","1277.750","1288.990","1276.000","13632.000"]]}}}`
+
+	klines, err := parseTencentKLines(data, "sh600519", "600519", "day")
+	if err != nil {
+		t.Fatalf("解析腾讯K线失败: %v", err)
+	}
+	if len(klines) != 2 {
+		t.Fatalf("K线数量不正确: 期望 2, 实际 %d", len(klines))
+	}
+	if !klines[0].Open.Equal(decimal.NewFromFloat(1304)) {
+		t.Errorf("K线开盘价不正确: %s", klines[0].Open.String())
+	}
+	if !klines[1].Close.Equal(decimal.NewFromFloat(1277.75)) {
+		t.Errorf("K线收盘价不正确: %s", klines[1].Close.String())
+	}
+	if klines[1].Volume != 13632 {
+		t.Errorf("K线成交量不正确: %d", klines[1].Volume)
 	}
 }

@@ -18,7 +18,8 @@ api.interceptors.response.use(
     return Promise.reject(new Error(data.message || '请求失败'));
   },
   (error) => {
-    return Promise.reject(error);
+    const message = error.response?.data?.message || error.message || '请求失败';
+    return Promise.reject(new Error(message));
   }
 );
 

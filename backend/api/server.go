@@ -8,8 +8,11 @@ import (
 	"aqsystem/models"
 	"aqsystem/risk"
 	"aqsystem/strategy"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
@@ -475,15 +478,25 @@ func (s *Server) runBacktest(c *gin.Context) {
 		return
 	}
 
-	startDate, err := time.Parse("2006-01-02", req.StartDate)
+	stockCodes, err := normalizeBacktestStocks(req.Stocks)
+	if err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	startDate, err := time.ParseInLocation("2006-01-02", req.StartDate, time.Local)
 	if err != nil {
 		s.responseError(c, http.StatusBadRequest, "日期格式错误")
 		return
 	}
 
-	endDate, err := time.Parse("2006-01-02", req.EndDate)
+	endDate, err := time.ParseInLocation("2006-01-02", req.EndDate, time.Local)
 	if err != nil {
 		s.responseError(c, http.StatusBadRequest, "日期格式错误")
+		return
+	}
+	if endDate.Before(startDate) {
+		s.responseError(c, http.StatusBadRequest, "结束日期不能早于开始日期")
 		return
 	}
 
@@ -497,10 +510,10 @@ func (s *Server) runBacktest(c *gin.Context) {
 		ID:          "backtest_" + req.StrategyType,
 		Name:        req.StrategyType,
 		Type:        req.StrategyType,
-		Stocks:      req.Stocks,
+		Stocks:      stockCodes,
 		Params:      req.Params,
 		Status:      models.StrategyStatusPaused,
-		MaxPosition: initCapital.Div(decimal.NewFromInt(int64(len(req.Stocks)))),
+		MaxPosition: initCapital.Div(decimal.NewFromInt(int64(len(stockCodes)))),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -524,8 +537,9 @@ func (s *Server) runBacktest(c *gin.Context) {
 
 	// 获取K线数据
 	klines := make(map[string][]models.KLine)
-	for _, code := range req.Stocks {
-		klineData, err := s.marketSvc.GetKLines(c.Request.Context(), code, "day", 500)
+	klineCount := estimateBacktestKLineCount(startDate, endDate)
+	for _, code := range stockCodes {
+		klineData, err := s.marketSvc.GetKLines(c.Request.Context(), code, "day", klineCount)
 		if err != nil {
 			s.responseError(c, http.StatusBadGateway, "获取真实K线数据失败: "+code+" "+err.Error())
 			return
@@ -545,6 +559,43 @@ func (s *Server) runBacktest(c *gin.Context) {
 	}
 
 	s.responseSuccess(c, result)
+}
+
+func normalizeBacktestStocks(stocks []string) ([]string, error) {
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(stocks))
+	for _, stock := range stocks {
+		code := strings.TrimSpace(strings.ToLower(stock))
+		code = strings.TrimPrefix(code, "sh")
+		code = strings.TrimPrefix(code, "sz")
+
+		var digits strings.Builder
+		for _, r := range code {
+			if unicode.IsDigit(r) {
+				digits.WriteRune(r)
+			}
+		}
+		code = digits.String()
+		if len(code) != 6 {
+			return nil, fmt.Errorf("无效股票代码: %s", stock)
+		}
+		if !seen[code] {
+			seen[code] = true
+			result = append(result, code)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("至少需要一个股票代码")
+	}
+	return result, nil
+}
+
+func estimateBacktestKLineCount(startDate, endDate time.Time) int {
+	days := int(endDate.Sub(startDate).Hours()/24) + 1
+	if days < 120 {
+		return 120
+	}
+	return days*7/5 + 80
 }
 
 // ==================== 风控接口 ====================

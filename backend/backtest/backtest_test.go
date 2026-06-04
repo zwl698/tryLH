@@ -145,6 +145,43 @@ func TestBacktestEngine_CalcCommission(t *testing.T) {
 	}
 }
 
+func TestBacktestEngine_CompletedTradeStats(t *testing.T) {
+	logger := zap.NewNop()
+	btEngine := NewBacktestEngine(0.0003, 0.001, 0.001, logger)
+	state := &BacktestState{
+		Cash:       decimal.NewFromInt(1000000),
+		Positions:  make(map[string]*backtestPosition),
+		LastPrices: make(map[string]decimal.Decimal),
+	}
+	date := time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local)
+
+	btEngine.executeSignal(state, models.Signal{
+		StockCode: "600000",
+		Side:      models.OrderSideBuy,
+		Price:     decimal.NewFromInt(10),
+		Volume:    1000,
+	}, date)
+	if state.TotalTrades != 0 {
+		t.Fatalf("买入不应计入完成交易次数，实际 %d", state.TotalTrades)
+	}
+
+	btEngine.executeSignal(state, models.Signal{
+		StockCode: "600000",
+		Side:      models.OrderSideSell,
+		Price:     decimal.NewFromInt(11),
+		Volume:    1000,
+	}, date.AddDate(0, 0, 1))
+	if state.TotalTrades != 1 {
+		t.Fatalf("卖出平仓应计入1笔完成交易，实际 %d", state.TotalTrades)
+	}
+	if state.WinTrades != 1 || state.LossTrades != 0 {
+		t.Fatalf("胜负统计不正确，赢 %d 亏 %d", state.WinTrades, state.LossTrades)
+	}
+	if len(state.Trades) != state.TotalTrades {
+		t.Fatalf("完成交易数应等于交易记录数，记录 %d 总数 %d", len(state.Trades), state.TotalTrades)
+	}
+}
+
 func TestBacktestEngine_Sqrt(t *testing.T) {
 	tests := []struct {
 		input    float64

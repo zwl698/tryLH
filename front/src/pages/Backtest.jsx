@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
     Button,
     Card,
@@ -17,11 +17,40 @@ import {
 } from 'antd';
 import {FundOutlined, PlayCircleOutlined} from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
-import {getStrategyTemplates, runBacktest} from '../services/api';
+import {getQuote, getStrategyTemplates, runBacktest} from '../services/api';
 import {formatMoney, formatNumber} from '../utils/format';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
+
+const DEFAULT_STOCK_OPTIONS = [
+  { value: '600519', label: '600519 贵州茅台' },
+  { value: '000858', label: '000858 五粮液' },
+  { value: '000001', label: '000001 平安银行' },
+  { value: '600036', label: '600036 招商银行' },
+  { value: '601318', label: '601318 中国平安' },
+  { value: '000333', label: '000333 美的集团' },
+  { value: '300750', label: '300750 宁德时代' },
+  { value: '002475', label: '002475 立讯精密' },
+  { value: '600276', label: '600276 恒瑞医药' },
+  { value: '601888', label: '601888 中国中免' },
+];
+
+function normalizeStockCode(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^(sh|sz)/i, '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
+}
+
+function mergeStockOptions(...groups) {
+  const map = new Map();
+  groups.flat().forEach(option => {
+    if (option?.value) map.set(option.value, option);
+  });
+  return Array.from(map.values());
+}
 
 export default function BacktestPage() {
   const [form] = Form.useForm();
@@ -29,9 +58,15 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [selectedType, setSelectedType] = useState('double_ma');
+  const [stockOptions, setStockOptions] = useState(DEFAULT_STOCK_OPTIONS);
+  const [stockSearching, setStockSearching] = useState(false);
+  const searchTimerRef = useRef(null);
 
   useEffect(() => {
     fetchTemplates();
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
   }, []);
 
   const fetchTemplates = async () => {
@@ -47,16 +82,23 @@ export default function BacktestPage() {
       setLoading(true);
       setResult(null);
 
+      const stocks = [...new Set(values.stocks.map(normalizeStockCode))].filter(code => code.length === 6);
+      if (stocks.length === 0) {
+        message.error('请输入有效的6位股票代码');
+        return;
+      }
+
       const params = {};
-      Object.entries(values).forEach(([k, v]) => {
-        if (!['strategy_type', 'stocks', 'dateRange', 'init_capital'].includes(k) && v !== undefined && v !== null) {
-          params[k] = v;
+      paramFields.forEach(p => {
+        const value = values[p.key] ?? p.default;
+        if (value !== undefined && value !== null) {
+          params[p.key] = value;
         }
       });
 
       const data = await runBacktest({
         strategy_type: values.strategy_type,
-        stocks: values.stocks,
+        stocks,
         params,
         start_date: values.dateRange[0].format('YYYY-MM-DD'),
         end_date: values.dateRange[1].format('YYYY-MM-DD'),
@@ -70,6 +112,55 @@ export default function BacktestPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleStrategyChange = (type) => {
+    setSelectedType(type);
+    const template = templates.find(t => t.type === type);
+    const defaults = {};
+    (template?.params || []).forEach(p => {
+      defaults[p.key] = p.default;
+    });
+    form.setFieldsValue(defaults);
+  };
+
+  const handleStockSearch = (keyword) => {
+    const input = String(keyword || '').trim();
+    const localMatches = DEFAULT_STOCK_OPTIONS.filter(option =>
+      option.value.includes(input) || option.label.includes(input)
+    );
+    if (localMatches.length > 0) {
+      setStockOptions(prev => mergeStockOptions(localMatches, prev));
+    }
+
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    const code = normalizeStockCode(input);
+    if (code.length !== 6) return;
+
+    searchTimerRef.current = setTimeout(async () => {
+      setStockSearching(true);
+      try {
+        const quote = await getQuote(code);
+        const option = {
+          value: quote?.stock_code || code,
+          label: `${quote?.stock_code || code} ${quote?.stock_name || ''}`.trim(),
+        };
+        setStockOptions(prev => mergeStockOptions([option], prev, DEFAULT_STOCK_OPTIONS));
+      } catch {
+        setStockOptions(prev => mergeStockOptions([{ value: code, label: `${code} 未验证` }], prev, DEFAULT_STOCK_OPTIONS));
+      } finally {
+        setStockSearching(false);
+      }
+    }, 300);
+  };
+
+  const handleStocksChange = (values) => {
+    const normalized = [...new Set(values.map(normalizeStockCode).filter(Boolean))];
+    const nextOptions = normalized
+      .filter(code => code.length === 6)
+      .map(code => ({ value: code, label: code }));
+    setStockOptions(prev => mergeStockOptions(prev, nextOptions, DEFAULT_STOCK_OPTIONS));
+    form.setFieldsValue({ stocks: normalized });
   };
 
   // 权益曲线图
@@ -165,21 +256,39 @@ export default function BacktestPage() {
               init_capital: 1000000,
             }}>
               <Form.Item label="策略类型" name="strategy_type" rules={[{ required: true }]}>
-                <Select onChange={setSelectedType}>
+                <Select onChange={handleStrategyChange}>
                   {templates.map(t => (
                     <Select.Option key={t.type} value={t.type}>{t.name}</Select.Option>
                   ))}
                 </Select>
               </Form.Item>
 
-              <Form.Item label="股票代码" name="stocks" rules={[{ required: true }]}>
-                <Select mode="tags" placeholder="输入股票代码，回车添加">
-                  <Select.Option value="600519">600519 贵州茅台</Select.Option>
-                  <Select.Option value="000858">000858 五粮液</Select.Option>
-                  <Select.Option value="000001">000001 平安银行</Select.Option>
-                  <Select.Option value="600036">600036 招商银行</Select.Option>
-                  <Select.Option value="300750">300750 宁德时代</Select.Option>
-                </Select>
+              <Form.Item
+                label="股票代码"
+                name="stocks"
+                rules={[
+                  { required: true, message: '请输入股票代码' },
+                  {
+                    validator: (_, value = []) => {
+                      const invalid = value.map(normalizeStockCode).filter(code => code.length !== 6);
+                      return invalid.length === 0 ? Promise.resolve() : Promise.reject(new Error('股票代码必须为6位数字'));
+                    },
+                  },
+                ]}
+              >
+                <Select
+                  mode="tags"
+                  showSearch
+                  tokenSeparators={[',', '，', ' ', '\n']}
+                  placeholder="输入6位股票代码，如 002475"
+                  options={stockOptions}
+                  loading={stockSearching}
+                  onSearch={handleStockSearch}
+                  onChange={handleStocksChange}
+                  filterOption={(input, option) =>
+                    String(option?.label || '').includes(input) || String(option?.value || '').includes(input)
+                  }
+                />
               </Form.Item>
 
               <Form.Item label="回测区间" name="dateRange" rules={[{ required: true }]}>
@@ -198,6 +307,7 @@ export default function BacktestPage() {
                   label={p.name || p.key}
                   name={p.key}
                   initialValue={p.default}
+                  preserve={false}
                 >
                   {p.type === 'int' ? (
                     <InputNumber style={{ width: '100%' }} step={1} />

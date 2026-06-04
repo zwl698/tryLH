@@ -2,13 +2,13 @@ import React, {useEffect, useState} from 'react';
 import {Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {Badge, Layout, Menu, theme} from 'antd';
 import {
-    ApiOutlined,
-    DashboardOutlined,
-    FundOutlined,
-    LineChartOutlined,
-    RobotOutlined,
-    SafetyCertificateOutlined,
-    SwapOutlined,
+  ApiOutlined,
+  DashboardOutlined,
+  FundOutlined,
+  LineChartOutlined,
+  RobotOutlined,
+  SafetyCertificateOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import {getSystemStatus} from '../services/api';
 

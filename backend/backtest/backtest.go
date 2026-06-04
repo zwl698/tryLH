@@ -187,7 +187,6 @@ func (e *BacktestEngine) executeSignal(state *BacktestState, signal models.Signa
 		}
 
 		state.DateTrades++
-		state.TotalTrades++
 
 	} else if signal.Side == models.OrderSideSell {
 		// 卖出
@@ -226,6 +225,7 @@ func (e *BacktestEngine) executeSignal(state *BacktestState, signal models.Signa
 			EntryTime:  pos.EntryTime,
 			ExitTime:   date,
 		})
+		state.TotalTrades++
 
 		// 更新持仓
 		pos.Volume -= sellVol
@@ -234,7 +234,6 @@ func (e *BacktestEngine) executeSignal(state *BacktestState, signal models.Signa
 		}
 
 		state.DateTrades++
-		state.TotalTrades++
 	}
 }
 

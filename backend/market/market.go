@@ -150,6 +150,10 @@ func (p *SinaProvider) GetQuotes(ctx context.Context, stockCodes []string) (map[
 
 // GetKLines 获取K线数据
 func (p *SinaProvider) GetKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
+	if period == "minute" || period == "1m" {
+		return p.getTencentMinuteLines(ctx, stockCode, count)
+	}
+
 	klines, err := p.getEastMoneyKLines(ctx, stockCode, period, count)
 	if err == nil && len(klines) > 0 {
 		return klines, nil
@@ -323,6 +327,32 @@ func (p *SinaProvider) getTencentKLines(ctx context.Context, stockCode string, p
 	}
 
 	return parseTencentKLines(resp.String(), txCode, normalizeStockCode(stockCode), period)
+}
+
+func (p *SinaProvider) getTencentMinuteLines(ctx context.Context, stockCode string, count int) ([]models.KLine, error) {
+	txCode := toSinaCode(stockCode)
+	url := "https://web.ifzq.gtimg.cn/appstock/app/minute/query"
+	resp, err := p.client.R().
+		SetContext(ctx).
+		SetHeader("User-Agent", "Mozilla/5.0").
+		SetHeader("Referer", "https://gu.qq.com/").
+		SetQueryParam("code", txCode).
+		Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("请求腾讯分时失败: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("腾讯分时返回异常，状态码: %d", resp.StatusCode())
+	}
+
+	klines, err := parseTencentMinuteLines(resp.String(), txCode, normalizeStockCode(stockCode), time.Now())
+	if err != nil {
+		return nil, err
+	}
+	if count > 0 && len(klines) > count {
+		klines = klines[len(klines)-count:]
+	}
+	return klines, nil
 }
 
 // GetIndexQuote 获取大盘指数行情
@@ -942,6 +972,110 @@ func parseTencentKLines(data string, txCode string, stockCode string, period str
 		return nil, fmt.Errorf("腾讯K线数据为空")
 	}
 	return klines, nil
+}
+
+type tencentMinuteStockData struct {
+	Data struct {
+		Rows []string `json:"data"`
+	} `json:"data"`
+}
+
+func parseTencentMinuteLines(data string, txCode string, stockCode string, tradingDay time.Time) ([]models.KLine, error) {
+	var resp tencentKLineResponse
+	if err := json.Unmarshal([]byte(data), &resp); err != nil {
+		return nil, fmt.Errorf("解析腾讯分时JSON失败: %w", err)
+	}
+	if resp.Code != 0 {
+		return nil, fmt.Errorf("腾讯分时返回异常: %s", resp.Msg)
+	}
+
+	rawStock, ok := resp.Data[txCode]
+	if !ok {
+		return nil, fmt.Errorf("腾讯分时数据为空")
+	}
+
+	var stockData tencentMinuteStockData
+	if err := json.Unmarshal(rawStock, &stockData); err != nil {
+		return nil, fmt.Errorf("解析腾讯分时股票数据失败: %w", err)
+	}
+	if len(stockData.Data.Rows) == 0 {
+		return nil, fmt.Errorf("腾讯分时数据为空")
+	}
+
+	day := localDate(tradingDay)
+	klines := make([]models.KLine, 0, len(stockData.Data.Rows))
+	var prevVolume int64
+	prevAmount := decimal.Zero
+
+	for _, row := range stockData.Data.Rows {
+		fields := strings.Fields(row)
+		if len(fields) < 3 {
+			continue
+		}
+
+		t, err := parseMinuteTime(day, fields[0])
+		if err != nil {
+			continue
+		}
+
+		price := safeDecimal(fields[1])
+		cumulativeVolume := safeInt64(fields[2])
+		volume := cumulativeVolume - prevVolume
+		if volume < 0 {
+			volume = cumulativeVolume
+		}
+		prevVolume = cumulativeVolume
+
+		amount := decimal.Zero
+		if len(fields) > 3 {
+			cumulativeAmount := safeDecimal(fields[3])
+			amount = cumulativeAmount.Sub(prevAmount)
+			if amount.LessThan(decimal.Zero) {
+				amount = cumulativeAmount
+			}
+			prevAmount = cumulativeAmount
+		}
+
+		klines = append(klines, models.KLine{
+			StockCode: stockCode,
+			Period:    "minute",
+			Open:      price,
+			High:      price,
+			Low:       price,
+			Close:     price,
+			Volume:    volume,
+			Amount:    amount,
+			Timestamp: t,
+		})
+	}
+
+	if len(klines) == 0 {
+		return nil, fmt.Errorf("腾讯分时数据为空")
+	}
+	return klines, nil
+}
+
+func parseMinuteTime(day time.Time, value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if len(value) != 4 {
+		return time.Time{}, fmt.Errorf("无效分时时间: %s", value)
+	}
+	hour, err := strconv.Atoi(value[:2])
+	if err != nil {
+		return time.Time{}, err
+	}
+	minute, err := strconv.Atoi(value[2:])
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	y, m, d := day.In(time.Local).Date()
+	return time.Date(y, m, d, hour, minute, 0, 0, time.Local), nil
+}
+
+func localDate(t time.Time) time.Time {
+	y, m, d := t.In(time.Local).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.Local)
 }
 
 func jsonValueToString(value interface{}) string {

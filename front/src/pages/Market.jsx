@@ -26,7 +26,54 @@ const INDEX_CODES = {
   '创业板指': '399006',
 };
 
+function normalizeMarketCode(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^(sh|sz)/i, '')
+    .replace(/\D/g, '')
+    .slice(0, 6);
+}
+
+function formatKLineTime(timestamp, period) {
+  const d = new Date(timestamp);
+  if (period === 'minute') {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function calculateMACD(closes) {
+  let ema12 = 0;
+  let ema26 = 0;
+  let dea = 0;
+  const shortAlpha = 2 / (12 + 1);
+  const longAlpha = 2 / (26 + 1);
+  const signalAlpha = 2 / (9 + 1);
+
+  return closes.map((rawValue, index) => {
+    const value = Number.isFinite(rawValue) ? rawValue : 0;
+    if (index === 0) {
+      ema12 = value;
+      ema26 = value;
+    } else {
+      ema12 = value * shortAlpha + ema12 * (1 - shortAlpha);
+      ema26 = value * longAlpha + ema26 * (1 - longAlpha);
+    }
+
+    const dif = ema12 - ema26;
+    dea = index === 0 ? dif : dif * signalAlpha + dea * (1 - signalAlpha);
+    const macd = (dif - dea) * 2;
+
+    return {
+      dif: Number(dif.toFixed(4)),
+      dea: Number(dea.toFixed(4)),
+      macd: Number(macd.toFixed(4)),
+    };
+  });
+}
+
 export default function MarketPage() {
+  const [messageApi, contextHolder] = message.useMessage();
   const [searchCode, setSearchCode] = useState('');
   const [quotes, setQuotes] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
@@ -103,14 +150,18 @@ export default function MarketPage() {
       const quoteData = await getQuote(code);
       setSelectedStock(quoteData);
     } catch (e) {
-      message.error('获取行情数据失败');
+      messageApi.error('获取行情数据失败');
     }
     setKlineLoading(false);
   };
 
   const handleSearch = (code) => {
     if (!code.trim()) return;
-    const cleanCode = code.trim().replace(/[a-zA-Z]/g, '');
+    const cleanCode = normalizeMarketCode(code);
+    if (cleanCode.length !== 6) {
+      messageApi.warning('请输入6位股票代码');
+      return;
+    }
     setSearchCode(cleanCode);
     fetchKLine(cleanCode);
   };
@@ -123,42 +174,57 @@ export default function MarketPage() {
     localStorage.setItem('favorites', JSON.stringify(newFavs));
   };
 
-  // K线图配置
+  // K线/分时图配置
   const getKLineOption = () => {
     if (!klineData || klineData.length === 0) return {};
 
-    const dates = klineData.map(k => {
-      const d = new Date(k.timestamp);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    });
+    const isMinute = klinePeriod === 'minute';
+    const dates = klineData.map(k => formatKLineTime(k.timestamp, klinePeriod));
     const ohlc = klineData.map(k => [parseFloat(k.open), parseFloat(k.close), parseFloat(k.low), parseFloat(k.high)]);
+    const closes = klineData.map(k => parseFloat(k.close || 0));
     const volumes = klineData.map(k => parseFloat(k.volume || 0));
+    const macd = calculateMACD(closes);
+    const zoomStart = klineData.length > 120 ? 55 : 0;
+    const priceSeriesName = isMinute ? '分时' : 'K线';
 
     return {
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross' },
       },
-      legend: { data: ['K线', '成交量'], top: 5 },
+      legend: { data: [priceSeriesName, '成交量', 'DIF', 'DEA', 'MACD'], top: 5 },
       grid: [
-        { left: '8%', right: '3%', top: 40, height: '55%' },
-        { left: '8%', right: '3%', top: '72%', height: '18%' },
+        { left: '8%', right: '3%', top: 42, height: '45%' },
+        { left: '8%', right: '3%', top: '60%', height: '12%' },
+        { left: '8%', right: '3%', top: '76%', height: '12%' },
       ],
       xAxis: [
         { type: 'category', data: dates, gridIndex: 0, boundaryGap: true, axisLabel: { show: false } },
-        { type: 'category', data: dates, gridIndex: 1, boundaryGap: true },
+        { type: 'category', data: dates, gridIndex: 1, boundaryGap: true, axisLabel: { show: false } },
+        { type: 'category', data: dates, gridIndex: 2, boundaryGap: true },
       ],
       yAxis: [
         { scale: true, gridIndex: 0, splitArea: { show: true } },
         { scale: true, gridIndex: 1, splitNumber: 2 },
+        { scale: true, gridIndex: 2, splitNumber: 2 },
       ],
       dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
-        { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: 5, start: 60, end: 100 },
+        { type: 'inside', xAxisIndex: [0, 1, 2], start: zoomStart, end: 100 },
+        { show: true, xAxisIndex: [0, 1, 2], type: 'slider', bottom: 5, start: zoomStart, end: 100 },
       ],
       series: [
-        {
-          name: 'K线',
+        isMinute ? {
+          name: priceSeriesName,
+          type: 'line',
+          data: closes,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          showSymbol: false,
+          smooth: true,
+          lineStyle: { color: '#1677ff', width: 2 },
+          areaStyle: { color: 'rgba(22, 119, 255, 0.08)' },
+        } : {
+          name: priceSeriesName,
           type: 'candlestick',
           data: ohlc,
           xAxisIndex: 0,
@@ -179,9 +245,43 @@ export default function MarketPage() {
           itemStyle: {
             color: function (params) {
               const idx = params.dataIndex;
+              if (isMinute) {
+                const prev = idx > 0 ? closes[idx - 1] : closes[idx];
+                return closes[idx] >= prev ? '#f5222d' : '#52c41a';
+              }
               return ohlc[idx] && ohlc[idx][1] >= ohlc[idx][0] ? '#f5222d' : '#52c41a';
             },
           },
+        },
+        {
+          name: 'MACD',
+          type: 'bar',
+          data: macd.map(item => item.macd),
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          itemStyle: {
+            color: function (params) {
+              return params.value >= 0 ? '#f5222d' : '#52c41a';
+            },
+          },
+        },
+        {
+          name: 'DIF',
+          type: 'line',
+          data: macd.map(item => item.dif),
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          showSymbol: false,
+          lineStyle: { color: '#faad14', width: 1.5 },
+        },
+        {
+          name: 'DEA',
+          type: 'line',
+          data: macd.map(item => item.dea),
+          xAxisIndex: 2,
+          yAxisIndex: 2,
+          showSymbol: false,
+          lineStyle: { color: '#722ed1', width: 1.5 },
         },
       ],
     };
@@ -236,6 +336,7 @@ export default function MarketPage() {
 
   return (
     <div>
+      {contextHolder}
       {/* 指数概览 */}
       <Row gutter={[16, 16]}>
         {Object.entries(indexQuotes).map(([name, data]) => {
@@ -279,6 +380,7 @@ export default function MarketPage() {
                 value={searchCode}
                 onChange={e => setSearchCode(e.target.value)}
                 onSearch={handleSearch}
+                onPressEnter={e => handleSearch(e.currentTarget.value)}
                 style={{ width: 300 }}
                 enterButton={<><SearchOutlined /> 查询</>}
               />
@@ -312,7 +414,7 @@ export default function MarketPage() {
         {/* K线图 */}
         <Col xs={24} md={14}>
           <Card
-            title={selectedStock ? `${selectedStock.stock_name || selectedStock.stock_code} K线图` : 'K线图'}
+            title={selectedStock ? `${selectedStock.stock_name || selectedStock.stock_code} ${klinePeriod === 'minute' ? '分时图' : 'K线图'}` : '行情图'}
             size="small"
             extra={
               <Tabs
@@ -320,6 +422,7 @@ export default function MarketPage() {
                 activeKey={klinePeriod}
                 onChange={setKlinePeriod}
                 items={[
+                  { key: 'minute', label: '分时' },
                   { key: 'day', label: '日K' },
                   { key: 'week', label: '周K' },
                   { key: 'month', label: '月K' },

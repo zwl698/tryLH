@@ -273,6 +273,9 @@ func (s *Server) getKLines(c *gin.Context) {
 	code := c.Param("code")
 	period := c.DefaultQuery("period", "day")
 	count := 100
+	if period == "minute" || period == "1m" {
+		count = 300
+	}
 
 	quotes, err := s.marketSvc.GetKLines(c.Request.Context(), code, period, count)
 	if err != nil {
@@ -410,9 +413,9 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 			"name":        "双均线交叉策略",
 			"description": "短期均线上穿长期均线形成金叉买入，下穿形成死叉卖出。最经典的技术分析策略，适合趋势明显的市场。",
 			"params": []gin.H{
-				{"key": "short_period", "name": "短期均线周期", "type": "int", "default": 5},
-				{"key": "long_period", "name": "长期均线周期", "type": "int", "default": 20},
-				{"key": "ma_type", "name": "均线类型", "type": "string", "default": "SMA"},
+				{"key": "short_period", "name": "短期均线周期", "type": "int", "default": 5, "min": 2, "max": 60, "description": "用于捕捉短期趋势，数值越小越灵敏，默认5日。"},
+				{"key": "long_period", "name": "长期均线周期", "type": "int", "default": 20, "min": 10, "max": 250, "description": "用于确认中长期趋势，必须大于短期周期，默认20日。"},
+				{"key": "ma_type", "name": "均线类型", "type": "string", "default": "SMA", "description": "SMA为简单均线，EMA更重视最近价格。默认SMA。"},
 			},
 		},
 		{
@@ -420,10 +423,10 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 			"name":        "海龟交易策略",
 			"description": "基于唐奇安通道突破的趋势跟踪策略，使用ATR进行仓位管理和止损。80年代最著名的交易系统之一。",
 			"params": []gin.H{
-				{"key": "entry_period", "name": "入场通道周期", "type": "int", "default": 20},
-				{"key": "exit_period", "name": "出场通道周期", "type": "int", "default": 10},
-				{"key": "atr_period", "name": "ATR周期", "type": "int", "default": 20},
-				{"key": "risk_pct", "name": "每笔风险比例", "type": "float", "default": 0.01},
+				{"key": "entry_period", "name": "入场通道周期", "type": "int", "default": 20, "min": 5, "max": 100, "description": "突破最近N日高点时入场，默认20日。"},
+				{"key": "exit_period", "name": "出场通道周期", "type": "int", "default": 10, "min": 5, "max": 50, "description": "跌破最近N日低点时出场，默认10日。"},
+				{"key": "atr_period", "name": "ATR周期", "type": "int", "default": 20, "min": 5, "max": 100, "description": "用于计算波动率和止损距离，默认20日。"},
+				{"key": "risk_pct", "name": "每笔风险比例", "type": "float", "default": 0.01, "min": 0.001, "max": 0.05, "description": "单笔交易最大风险占资金比例，0.01表示1%。"},
 			},
 		},
 		{
@@ -431,9 +434,10 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 			"name":        "动量策略",
 			"description": "选择过去N日涨幅最大的股票买入（强者恒强），当动量减弱时卖出。学术研究表明3-12个月动量效应在A股显著存在。",
 			"params": []gin.H{
-				{"key": "lookback_period", "name": "回望期", "type": "int", "default": 20},
-				{"key": "holding_period", "name": "持有期", "type": "int", "default": 10},
-				{"key": "momentum_threshold", "name": "动量阈值", "type": "float", "default": 0.05},
+				{"key": "lookback_period", "name": "回望期", "type": "int", "default": 20, "min": 5, "max": 120, "description": "计算过去N日涨跌幅，默认20日。"},
+				{"key": "holding_period", "name": "持有期", "type": "int", "default": 10, "min": 1, "max": 60, "description": "买入后至少持有的交易日数量，默认10日。"},
+				{"key": "top_n", "name": "选股数量", "type": "int", "default": 3, "min": 1, "max": 20, "description": "多股票回测时选择动量最强的前N只，默认3只。"},
+				{"key": "momentum_threshold", "name": "动量阈值", "type": "float", "default": 0.05, "min": 0.0, "max": 0.5, "description": "达到该涨幅阈值才买入，0.05表示5%。"},
 			},
 		},
 		{
@@ -441,9 +445,9 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 			"name":        "均值回归策略",
 			"description": "价格偏离均值过大时预期会回归，低于均值-2倍标准差时买入，回归后卖出。最经典的统计套利策略。",
 			"params": []gin.H{
-				{"key": "lookback_period", "name": "回望期", "type": "int", "default": 20},
-				{"key": "entry_zscore", "name": "入场Z-score", "type": "float", "default": 2.0},
-				{"key": "exit_zscore", "name": "出场Z-score", "type": "float", "default": 0.5},
+				{"key": "lookback_period", "name": "回望期", "type": "int", "default": 20, "min": 5, "max": 120, "description": "计算均值和标准差的窗口，默认20日。"},
+				{"key": "entry_zscore", "name": "入场Z-score", "type": "float", "default": 2.0, "min": 1.0, "max": 4.0, "description": "价格低于均值若干倍标准差时买入，默认2.0。"},
+				{"key": "exit_zscore", "name": "出场Z-score", "type": "float", "default": 0.5, "min": 0.0, "max": 2.0, "description": "价格回归到该偏离范围内时卖出，默认0.5。"},
 			},
 		},
 		{
@@ -451,10 +455,10 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 			"name":        "网格交易策略",
 			"description": "在价格区间内设置网格，每下降一格买入一定数量，每上涨一格卖出。适合震荡行情，A股最常用的自动化策略。",
 			"params": []gin.H{
-				{"key": "upper_price", "name": "网格上限价", "type": "float", "default": 0},
-				{"key": "lower_price", "name": "网格下限价", "type": "float", "default": 0},
-				{"key": "grid_count", "name": "网格数量", "type": "int", "default": 10},
-				{"key": "grid_volume", "name": "每格交易量", "type": "int", "default": 100},
+				{"key": "upper_price", "name": "网格上限价", "type": "float", "default": 0, "description": "网格区间上沿，0表示由策略自动初始化。"},
+				{"key": "lower_price", "name": "网格下限价", "type": "float", "default": 0, "description": "网格区间下沿，0表示由策略自动初始化。"},
+				{"key": "grid_count", "name": "网格数量", "type": "int", "default": 10, "min": 3, "max": 50, "description": "区间切分数量，越多交易越频繁，默认10格。"},
+				{"key": "grid_volume", "name": "每格交易量", "type": "int", "default": 100, "min": 100, "max": 10000, "description": "每次触发网格买卖的股数，A股默认最小100股。"},
 			},
 		},
 	}

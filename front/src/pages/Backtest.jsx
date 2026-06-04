@@ -52,8 +52,42 @@ function mergeStockOptions(...groups) {
   return Array.from(map.values());
 }
 
+function getParamExtra(param) {
+  const parts = [];
+  if (param.description) parts.push(param.description);
+  if (param.default !== undefined) parts.push(`默认值：${param.default}`);
+  if (param.min !== undefined || param.max !== undefined) {
+    parts.push(`建议范围：${param.min ?? '不限'} - ${param.max ?? '不限'}`);
+  }
+  return parts.join('；');
+}
+
+function getEquityAxisBounds(equities, capital) {
+  const values = equities.filter(Number.isFinite);
+  if (Number.isFinite(capital)) values.push(capital);
+  if (values.length === 0) return {};
+
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const range = maxValue - minValue;
+  if (range === 0) {
+    const padding = Math.max(Math.abs(maxValue) * 0.005, 100);
+    return {
+      min: Number((minValue - padding).toFixed(2)),
+      max: Number((maxValue + padding).toFixed(2)),
+    };
+  }
+
+  const padding = Math.max(range * 0.15, Math.abs(capital || maxValue) * 0.0005);
+  return {
+    min: Number((minValue - padding).toFixed(2)),
+    max: Number((maxValue + padding).toFixed(2)),
+  };
+}
+
 export default function BacktestPage() {
   const [form] = Form.useForm();
+  const [messageApi, contextHolder] = message.useMessage();
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -73,6 +107,12 @@ export default function BacktestPage() {
     try {
       const data = await getStrategyTemplates();
       setTemplates(data || []);
+      const template = (data || []).find(t => t.type === selectedType);
+      const defaults = {};
+      (template?.params || []).forEach(p => {
+        defaults[p.key] = p.default;
+      });
+      form.setFieldsValue(defaults);
     } catch {}
   };
 
@@ -84,7 +124,7 @@ export default function BacktestPage() {
 
       const stocks = [...new Set(values.stocks.map(normalizeStockCode))].filter(code => code.length === 6);
       if (stocks.length === 0) {
-        message.error('请输入有效的6位股票代码');
+        messageApi.error('请输入有效的6位股票代码');
         return;
       }
 
@@ -95,6 +135,13 @@ export default function BacktestPage() {
           params[p.key] = value;
         }
       });
+      if (
+        values.strategy_type === 'double_ma' &&
+        Number(params.long_period) <= Number(params.short_period)
+      ) {
+        messageApi.error('长期均线周期必须大于短期均线周期');
+        return;
+      }
 
       const data = await runBacktest({
         strategy_type: values.strategy_type,
@@ -106,9 +153,9 @@ export default function BacktestPage() {
       });
 
       setResult(data);
-      message.success('回测完成');
+      messageApi.success('回测完成');
     } catch (e) {
-      if (e.message) message.error('回测失败: ' + e.message);
+      if (e.message) messageApi.error('回测失败: ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -170,13 +217,14 @@ export default function BacktestPage() {
     const dates = result.daily_equity.map(e => dayjs(e.date).format('YYYY-MM-DD'));
     const equities = result.daily_equity.map(e => parseFloat(e.equity));
     const capital = parseFloat(result.initial_capital || 1000000);
+    const axisBounds = getEquityAxisBounds(equities, capital);
 
     return {
       tooltip: { trigger: 'axis' },
       legend: { data: ['权益曲线', '初始资金'], top: 5 },
       grid: { left: '8%', right: '3%', top: 40, bottom: 30 },
       xAxis: { type: 'category', data: dates },
-      yAxis: { type: 'value', scale: true },
+      yAxis: { type: 'value', scale: true, ...axisBounds },
       dataZoom: [
         { type: 'inside', start: 0, end: 100 },
         { type: 'slider', start: 0, end: 100 },
@@ -245,6 +293,7 @@ export default function BacktestPage() {
 
   return (
     <div>
+      {contextHolder}
       <Row gutter={[16, 16]}>
         {/* 回测配置 */}
         <Col xs={24} md={8}>
@@ -252,7 +301,7 @@ export default function BacktestPage() {
             <Form form={form} layout="vertical" initialValues={{
               strategy_type: 'double_ma',
               stocks: ['600519'],
-              dateRange: [dayjs().subtract(1, 'year'), dayjs()],
+              dateRange: [dayjs().subtract(3, 'month'), dayjs()],
               init_capital: 1000000,
             }}>
               <Form.Item label="策略类型" name="strategy_type" rules={[{ required: true }]}>
@@ -307,12 +356,13 @@ export default function BacktestPage() {
                   label={p.name || p.key}
                   name={p.key}
                   initialValue={p.default}
+                  extra={getParamExtra(p)}
                   preserve={false}
                 >
                   {p.type === 'int' ? (
-                    <InputNumber style={{ width: '100%' }} step={1} />
+                    <InputNumber style={{ width: '100%' }} min={p.min} max={p.max} step={1} placeholder={`默认 ${p.default}`} />
                   ) : p.type === 'float' ? (
-                    <InputNumber style={{ width: '100%' }} step={0.01} />
+                    <InputNumber style={{ width: '100%' }} min={p.min} max={p.max} step={0.01} placeholder={`默认 ${p.default}`} />
                   ) : (
                     <Select>
                       {p.key === 'ma_type' ? (
@@ -421,7 +471,7 @@ export default function BacktestPage() {
                 <Table
                   dataSource={result.trades || []}
                   columns={tradeColumns}
-                  rowKey={(_, i) => i}
+                  rowKey={r => `${r.stock_code}-${r.entry_time}-${r.exit_time}-${r.volume}-${r.profit}`}
                   size="small"
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: 700 }}

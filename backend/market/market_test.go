@@ -3,6 +3,7 @@ package market
 import (
 	"aqsystem/models"
 	"testing"
+	"time"
 
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
@@ -266,5 +267,33 @@ func TestParseTencentKLines(t *testing.T) {
 	}
 	if klines[1].Volume != 13632 {
 		t.Errorf("K线成交量不正确: %d", klines[1].Volume)
+	}
+}
+
+func TestParseTencentMinuteLines(t *testing.T) {
+	data := `{"code":0,"msg":"","data":{"sz002475":{"data":{"data":["0930 73.30 15823 115982590.00","0931 73.01 74757 545881123.00","0932 73.08 76100 555696123.00"]}}}}`
+	tradingDay := time.Date(2026, 6, 4, 0, 0, 0, 0, time.Local)
+
+	klines, err := parseTencentMinuteLines(data, "sz002475", "002475", tradingDay)
+	if err != nil {
+		t.Fatalf("解析腾讯分时失败: %v", err)
+	}
+	if len(klines) != 3 {
+		t.Fatalf("分时数量不正确: 期望 3, 实际 %d", len(klines))
+	}
+	if klines[0].Period != "minute" {
+		t.Errorf("分时周期不正确: %s", klines[0].Period)
+	}
+	if !klines[0].Close.Equal(decimal.NewFromFloat(73.30)) {
+		t.Errorf("分时价格不正确: %s", klines[0].Close.String())
+	}
+	if klines[0].Volume != 15823 {
+		t.Errorf("首分钟成交量不正确: %d", klines[0].Volume)
+	}
+	if klines[1].Volume != 58934 {
+		t.Errorf("第二分钟成交量应从累计量转成增量，实际 %d", klines[1].Volume)
+	}
+	if klines[2].Timestamp.Format("2006-01-02 15:04") != "2026-06-04 09:32" {
+		t.Errorf("分时时间不正确: %s", klines[2].Timestamp.Format("2006-01-02 15:04"))
 	}
 }

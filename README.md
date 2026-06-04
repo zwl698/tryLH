@@ -1,6 +1,6 @@
 # A股量化交易系统
 
-一个基于 Go 语言实现的完整 A 股量化交易系统，支持多券商接入、实时行情获取、复杂策略配置和风险控制。
+一个基于 Go + React 实现的完整 A 股量化交易系统，支持多券商接入、实时行情获取、复杂策略配置、可视化操作界面和风险控制。
 
 ## 功能特性
 
@@ -9,39 +9,71 @@
 - **内置5大策略**：双均线交叉、海龟交易、动量策略、均值回归、网格交易
 - **策略回测**：内置回测引擎，支持自定义初始资金、佣金费率
 - **风险控制**：单票仓位限制、总仓位限制、每日亏损限制、止损止盈
-- **RESTful API**：基于 Gin 框架，完整的 HTTP 接口
-- **完整单元测试**：63 个测试用例，覆盖所有核心模块
+- **Web可视化**：基于 React + Ant Design 的全功能前端界面
+- **RESTful API**：基于 Gin 框架，完整的 HTTP 接口，支持 CORS
+- **完整单元测试**：覆盖所有核心模块
 
 ## 技术栈
 
+### 后端
+
 | 组件 | 技术 |
 |------|------|
-| 语言 | Go 1.21 |
-| HTTP 框架 | Gin v1.9.1 |
-| HTTP 客户端 | go-resty/resty v2 |
+| 语言 | Go |
+| HTTP 框架 | Gin |
+| HTTP 客户端 | go-resty/resty |
 | 精度计算 | shopspring/decimal |
 | 日志 | uber-go/zap |
 | 配置 | gopkg.in/yaml.v3 |
+
+### 前端
+
+| 组件 | 技术 |
+|------|------|
+| 框架 | React 18 |
+| 构建 | Vite 5 |
+| UI 组件 | Ant Design 5 |
+| 图表 | ECharts 5 |
+| 路由 | React Router 6 |
+| HTTP | Axios |
 
 ## 项目结构
 
 ```
 .
-├── api/            # RESTful API 服务层（Gin）
-├── backtest/       # 策略回测引擎
-├── broker/         # 券商接口层
-│   ├── broker.go   # 接口定义 & 模拟券商
-│   ├── csc.go      # 中信建投
-│   ├── cj.go       # 长江证券
-│   ├── xtquant.go  # XTQuant
-│   └── factory.go  # 券商工厂
-├── config/         # 配置加载 & 日志初始化
-├── market/         # 行情数据服务（新浪/腾讯）
-├── models/         # 核心数据结构
-├── risk/           # 风险管理器
-├── strategy/       # 策略引擎 & 内置策略
-├── config.yaml     # 系统配置文件
-└── main.go         # 程序入口
+├── backend/                  # 后端 Go 项目
+│   ├── api/                  # RESTful API 服务层（Gin）
+│   ├── backtest/             # 策略回测引擎
+│   ├── broker/               # 券商接口层
+│   │   ├── broker.go         # 接口定义 & 模拟券商
+│   │   ├── csc.go            # 中信建投
+│   │   ├── cj.go             # 长江证券
+│   │   ├── xtquant.go        # XTQuant
+│   │   └── factory.go        # 券商工厂
+│   ├── config/               # 配置加载 & 日志初始化
+│   ├── market/               # 行情数据服务（新浪/腾讯）
+│   ├── models/               # 核心数据结构
+│   ├── risk/                 # 风险管理器
+│   ├── strategy/             # 策略引擎 & 内置策略
+│   ├── config.yaml           # 系统配置文件
+│   └── main.go               # 程序入口
+├── front/                    # 前端 React 项目
+│   ├── src/
+│   │   ├── pages/            # 页面组件
+│   │   │   ├── Dashboard.jsx # 系统总览
+│   │   │   ├── Market.jsx    # 行情中心
+│   │   │   ├── Strategy.jsx  # 策略管理
+│   │   │   ├── Trade.jsx     # 交易管理
+│   │   │   ├── Backtest.jsx  # 策略回测
+│   │   │   └── Risk.jsx      # 风控管理
+│   │   ├── components/       # 公共组件
+│   │   ├── services/         # API 服务层
+│   │   ├── utils/            # 工具函数
+│   │   ├── App.jsx           # 应用入口
+│   │   └── main.jsx          # 渲染入口
+│   ├── package.json
+│   └── vite.config.js        # Vite 配置（含代理）
+└── README.md
 ```
 
 ## 快速开始
@@ -49,30 +81,49 @@
 ### 环境要求
 
 - Go 1.21+
+- Node.js 18+
 
-### 安装依赖
+### 启动后端
 
 ```bash
+cd backend
 go mod tidy
-```
-
-### 运行系统
-
-```bash
 go run main.go
 ```
 
-系统默认监听 `http://0.0.0.0:8080`，可在 `config.yaml` 中修改。
+后端默认监听 `http://0.0.0.0:8080`，可在 `config.yaml` 中修改。
+
+### 启动前端
+
+```bash
+cd front
+npm install
+npm run dev
+```
+
+前端默认监听 `http://localhost:3000`，已配置代理自动转发 API 请求到后端。
 
 ### 运行测试
 
 ```bash
+cd backend
 go test ./... -v
 ```
 
+## 前端页面说明
+
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 系统总览 | /dashboard | 账户概览、资产分布饼图、策略状态、持仓列表、风控指标 |
+| 行情中心 | /market | 大盘指数、股票搜索、实时行情列表、K线图（日/周/月）、自选股 |
+| 策略管理 | /strategy | 5大策略模板展示、策略启停控制、参数编辑、策略详情 |
+| 交易管理 | /trade | 券商连接、账户信息、持仓明细、委托记录、手动下单、撤单 |
+| 策略回测 | /backtest | 策略选择、参数配置、时间区间、权益曲线图、交易明细 |
+| 风控管理 | /risk | 风控参数仪表盘、仓位/亏损/回撤限制配置、风控事件记录 |
+
 ## 配置说明
 
-编辑 `config.yaml`：
+编辑 `backend/config.yaml`：
 
 ```yaml
 server:
@@ -193,8 +244,10 @@ main.go
   ├── RiskManager（风险管理）
   ├── StrategyEngine（策略引擎）
   ├── BacktestEngine（回测引擎）
-  └── APIServer（HTTP服务）
+  └── APIServer（HTTP服务 + CORS）
          └── Gin Router
+              ↕ (REST API)
+         Frontend（React + Ant Design + ECharts）
 ```
 
 所有核心组件均基于接口设计，支持灵活替换：

@@ -16,6 +16,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// corsMiddleware CORS中间件
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
 // Server API服务器
 type Server struct {
 	engine       *strategy.Engine
@@ -60,6 +77,9 @@ func (s *Server) SetupRouter() *gin.Engine {
 	}
 
 	r := gin.Default()
+
+	// CORS中间件
+	r.Use(corsMiddleware())
 
 	// 健康检查
 	r.GET("/health", s.healthCheck)

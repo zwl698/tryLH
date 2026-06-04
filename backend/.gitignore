@@ -1,4 +1,4 @@
-# Go
+# Go 编译产物
 *.exe
 *.exe~
 *.dll
@@ -6,7 +6,12 @@
 *.dylib
 *.test
 *.out
+
+# 构建目录
 /bin/
+/dist/
+
+# 模块缓存
 /vendor/
 
 # 运行时数据
@@ -14,10 +19,8 @@
 /logs/*.log
 logs/
 
-# Node
-node_modules/
-dist/
-.cache/
+# 配置敏感信息（如需保留示例请使用 config.example.yaml）
+# config.yaml
 
 # macOS
 .DS_Store
@@ -26,7 +29,4 @@ dist/
 .idea/
 .vscode/
 *.iml
-
-# 二进制
-backend/aqsystem
 

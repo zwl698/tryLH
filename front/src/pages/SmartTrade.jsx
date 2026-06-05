@@ -48,14 +48,17 @@ function equityOption(result) {
   const max = Math.max(...equities);
   const padding = Math.max((max - min) * 0.15, max * 0.002, 100);
   return {
-    tooltip: { trigger: 'axis' },
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', backgroundColor: '#0f1f35', borderColor: 'rgba(24,231,255,0.28)', textStyle: { color: '#e6f4ff' } },
     grid: { left: 56, right: 20, top: 24, bottom: 34 },
-    xAxis: { type: 'category', data: dates },
+    xAxis: { type: 'category', data: dates, axisLine: { lineStyle: { color: 'rgba(117,166,255,0.35)' } }, axisLabel: { color: '#91a8c5' } },
     yAxis: {
       type: 'value',
       scale: true,
       min: Number((min - padding).toFixed(2)),
       max: Number((max + padding).toFixed(2)),
+      splitLine: { lineStyle: { color: 'rgba(117,166,255,0.12)' } },
+      axisLabel: { color: '#91a8c5' },
     },
     series: [{
       name: '权益',
@@ -63,8 +66,8 @@ function equityOption(result) {
       smooth: true,
       data: equities,
       symbol: 'none',
-      lineStyle: { width: 2, color: '#1677ff' },
-      areaStyle: { color: 'rgba(22,119,255,0.12)' },
+      lineStyle: { width: 2, color: '#18e7ff' },
+      areaStyle: { color: 'rgba(24,231,255,0.12)' },
     }],
   };
 }
@@ -229,35 +232,48 @@ export default function SmartTradePage() {
 
   return (
     <Spin spinning={loading}>
-      <div>
+      <div className="quant-page smart-workbench">
         {contextHolder}
-        <Alert
-          showIcon
-          type="info"
-          message="一键智能交易"
-          description="选择策略后，系统会自动匹配选股方案、拉取真实K线、完成回测，并可一键应用到模拟交易策略。"
-          style={{ marginBottom: 16 }}
-        />
+        <div className="quant-hero">
+          <Row gutter={[16, 16]} align="middle">
+            <Col xs={24} lg={13}>
+              <div className="quant-hero-content">
+                <h1 className="quant-title">智能策略研究控制台</h1>
+                <div className="quant-subtitle">
+                  自动完成策略匹配、候选选股、单股验证、组合回测和模拟/实盘应用，默认使用最近3个月真实K线。
+                </div>
+              </div>
+            </Col>
+            <Col xs={24} lg={11}>
+              <Space size={10} wrap style={{ justifyContent: 'flex-end', width: '100%' }}>
+                <div className="quant-mini-metric"><span>候选池</span><strong>{universe.length || '--'}</strong></div>
+                <div className="quant-mini-metric"><span>选股方案</span><strong>{plans.length || '--'}</strong></div>
+                <div className="quant-mini-metric"><span>策略模板</span><strong>{templates.length || '--'}</strong></div>
+                <div className="quant-mini-metric"><span>运行模式</span><strong>{form.getFieldValue('mode') === 'live' ? '实盘' : '模拟'}</strong></div>
+              </Space>
+            </Col>
+          </Row>
+        </div>
 
         {benchmark.length > 0 && (
-          <Card title="机构对标能力" size="small" style={{ marginBottom: 16 }}>
+          <Card title="机构对标能力" size="small" className="quant-terminal-card">
             <Row gutter={[12, 12]}>
               {benchmark.map(item => (
                 <Col xs={24} md={12} lg={6} key={item.module}>
-                  <Space direction="vertical" size={4}>
+                  <div className="professional-module">
                     <Space>
                       <Tag color={item.implemented ? 'green' : 'orange'}>{item.implemented ? '已接入' : '待接入'}</Tag>
                       <Text strong>{item.module}</Text>
                     </Space>
-                    <Text type="secondary">{item.system_field}</Text>
-                  </Space>
+                    <p>{item.system_field}</p>
+                  </div>
                 </Col>
               ))}
             </Row>
           </Card>
         )}
 
-        <Card size="small" style={{ marginBottom: 16 }}>
+        <Card size="small" className="quant-terminal-card">
           <Form form={form} layout="vertical">
             <Row gutter={16}>
               <Col xs={24} md={6}>
@@ -325,14 +341,13 @@ export default function SmartTradePage() {
               type="success"
               showIcon
               message={`${selectedPlan.name}：${selectedPlan.description}`}
-              style={{ marginTop: 4 }}
             />
           )}
         </Card>
 
         {result && (
           <>
-            <Card size="small" style={{ marginBottom: 16 }}>
+            <Card size="small" className="quant-terminal-card">
               <Steps
                 size="small"
                 items={(result.workflow || []).map(item => ({
@@ -357,7 +372,7 @@ export default function SmartTradePage() {
               />
             )}
 
-            <Card title="机构级验证摘要" size="small" style={{ marginBottom: 16 }}>
+            <Card title="机构级验证摘要" size="small" className="quant-terminal-card">
               <Row gutter={[16, 16]}>
                 <Col xs={12} md={5}>
                   <Statistic title="验证股票" value={validation.validated_count || 0} suffix={`/ ${validation.candidate_count || 0}`} />
@@ -378,7 +393,7 @@ export default function SmartTradePage() {
               {validation.method && <Text type="secondary">{validation.method}</Text>}
             </Card>
 
-            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Row gutter={[16, 16]}>
               <Col xs={12} md={6}>
                 <Card size="small"><Statistic title="总收益" value={Number(result.backtest?.total_return || 0)} precision={2} suffix="%" /></Card>
               </Col>
@@ -398,6 +413,7 @@ export default function SmartTradePage() {
                 <Card
                   title="智能选股结果"
                   size="small"
+                  className="quant-terminal-card"
                   extra={
                     <Button type="primary" onClick={handleApply} loading={applying}>
                       应用到{form.getFieldValue('mode') === 'live' ? '实盘' : '模拟交易'}
@@ -415,13 +431,13 @@ export default function SmartTradePage() {
                 </Card>
               </Col>
               <Col xs={24} lg={10}>
-                <Card title="回测权益曲线" size="small">
+                <Card title="回测权益曲线" size="small" className="quant-terminal-card">
                   <ReactECharts option={equityOption(result)} style={{ height: 360 }} />
                 </Card>
               </Col>
             </Row>
 
-            <Card title="推荐策略参数" size="small" style={{ marginTop: 16 }}>
+            <Card title="推荐策略参数" size="small" className="quant-terminal-card">
               <Space size={[8, 8]} wrap>
                 {Object.entries(result.recommended_params || {}).map(([key, value]) => (
                   <Tag key={key}>{key}: {String(value)}</Tag>
@@ -429,7 +445,7 @@ export default function SmartTradePage() {
               </Space>
             </Card>
 
-            <Card title="策略单股验证回测" size="small" style={{ marginTop: 16 }}>
+            <Card title="策略单股验证回测" size="small" className="quant-terminal-card">
               <Table
                 rowKey="stock_code"
                 size="small"

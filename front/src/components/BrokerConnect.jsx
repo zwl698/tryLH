@@ -141,7 +141,7 @@ export default function BrokerConnect({compact = false, onChanged}) {
         <Tooltip title={statusText}>
           <Space size={6}>
             <Badge status={connected ? 'success' : 'error'} />
-            <SafetyCertificateOutlined style={{ color: status?.live_trading ? '#cf1322' : '#1677ff' }} />
+            <SafetyCertificateOutlined style={{ color: status?.live_trading ? '#ff4d6d' : '#18e7ff' }} />
             {!compact && <span style={{ fontWeight: 500 }}>{currentName}</span>}
             <Tag color={tag.color} style={{ margin: 0 }}>{tag.text}</Tag>
           </Space>

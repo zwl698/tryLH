@@ -1,6 +1,6 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {Outlet, useLocation, useNavigate} from 'react-router-dom';
-import {Badge, Layout, Menu, theme} from 'antd';
+import {Badge, Layout, Menu, Space, Tag, theme} from 'antd';
 import {
   ApiOutlined,
   DashboardOutlined,
@@ -8,6 +8,7 @@ import {
   LineChartOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
+  StockOutlined,
   SwapOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -33,6 +34,10 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { token } = theme.useToken();
+  const activeTitle = useMemo(
+    () => menuItems.find(item => item.key === location.pathname)?.label || '系统总览',
+    [location.pathname]
+  );
 
   useEffect(() => {
     fetchStatus();
@@ -50,52 +55,41 @@ export default function MainLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
+    <Layout className="quant-shell">
       <Sider
+        className="quant-sider"
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        style={{
-          background: token.colorBgContainer,
-          borderRight: '1px solid #f0f0f0',
-        }}
+        width={238}
       >
-        <div style={{
-          height: 64,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderBottom: '1px solid #f0f0f0',
-        }}>
-          <ApiOutlined style={{ fontSize: 24, color: '#1677ff' }} />
+        <div className="quant-brand">
+          <span className="quant-brand-mark">
+            <ApiOutlined />
+          </span>
           {!collapsed && (
-            <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 600, lineHeight: 1.2, maxWidth: 140 }}>
-              {APP_NAME}
+            <span className="quant-brand-text">
+              <strong>{APP_NAME}</strong>
+              <span>AI A-SHARE QUANT TERMINAL</span>
             </span>
           )}
         </div>
         <Menu
+          className="quant-menu"
           mode="inline"
           selectedKeys={[location.pathname]}
           items={menuItems}
           onClick={({ key }) => navigate(key)}
-          style={{ borderRight: 0 }}
+          style={{ borderRight: 0, background: 'transparent' }}
         />
       </Sider>
       <Layout>
-        <Header style={{
-          padding: '0 24px',
-          background: token.colorBgContainer,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid #f0f0f0',
-          height: 64,
-        }}>
-          <span style={{ fontSize: 16, fontWeight: 500 }}>
-            {APP_NAME}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <Header className="quant-header">
+          <div className="quant-header-title">
+            <span>{activeTitle}</span>
+            <Tag color="cyan" style={{ marginInlineStart: 10 }}>实时研究台</Tag>
+          </div>
+          <Space size={14} className="quant-header-actions">
             <BrokerConnect compact onChanged={fetchStatus} />
             {systemStatus && (
               <>
@@ -103,20 +97,18 @@ export default function MainLayout() {
                   status="processing"
                   text={`${systemStatus.strategies || 0} 个策略`}
                 />
-                <span style={{ color: '#8c8c8c', fontSize: 12 }}>
+                <span className="quant-clock">
+                  <StockOutlined style={{ marginRight: 6, color: token.colorPrimary }} />
                   {systemStatus.timestamp ? new Date(systemStatus.timestamp).toLocaleTimeString('zh-CN') : ''}
                 </span>
               </>
             )}
-          </div>
+          </Space>
         </Header>
-        <Content style={{
-          margin: 16,
-          padding: 0,
-          minHeight: 280,
-          overflow: 'auto',
-        }}>
-          <Outlet />
+        <Content className="quant-content">
+          <div className="quant-content-inner">
+            <Outlet />
+          </div>
         </Content>
       </Layout>
     </Layout>

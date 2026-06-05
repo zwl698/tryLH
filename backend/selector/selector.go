@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -85,6 +86,13 @@ type Engine struct {
 	market MarketData
 }
 
+type evaluatedCandidate struct {
+	index    int
+	pick     StockPick
+	rejected RejectedStock
+	ok       bool
+}
+
 func NewEngine(market MarketData) *Engine {
 	return &Engine{market: market}
 }
@@ -130,6 +138,14 @@ func BuiltInPlans() []SelectionPlan {
 			StrategyTypes: []string{},
 			DefaultTopN:   5,
 			Metrics:       []string{"趋势", "动量", "波动", "回撤", "成交量"},
+		},
+		{
+			ID:            "institutional_ensemble",
+			Name:          "机构对标-多因子集成",
+			Description:   "综合动量、趋势突破、低回撤、波动率和成交量，模拟机构量化的多因子候选池初筛流程。",
+			StrategyTypes: []string{},
+			DefaultTopN:   5,
+			Metrics:       []string{"动量", "趋势", "突破", "低回撤", "波动率", "成交量"},
 		},
 	}
 }
@@ -202,29 +218,15 @@ func (e *Engine) Select(ctx context.Context, req SelectionRequest) (*SelectionRe
 		return nil, fmt.Errorf("候选股票池为空")
 	}
 
+	evaluated := e.evaluateCandidates(ctx, candidates, plan.ID, lookback)
 	picks := make([]StockPick, 0, len(candidates))
 	rejected := make([]RejectedStock, 0)
-	for _, candidate := range candidates {
-		klines, err := e.market.GetKLines(ctx, candidate.Code, "day", lookback+30)
-		if err != nil {
-			rejected = append(rejected, RejectedStock{StockCode: candidate.Code, StockName: candidate.Name, Reason: err.Error()})
-			continue
+	for _, item := range evaluated {
+		if item.ok {
+			picks = append(picks, item.pick)
+		} else {
+			rejected = append(rejected, item.rejected)
 		}
-		if len(klines) < 30 {
-			rejected = append(rejected, RejectedStock{StockCode: candidate.Code, StockName: candidate.Name, Reason: "K线数据不足"})
-			continue
-		}
-
-		metrics := calculateMetrics(klines)
-		score := scoreByPlan(plan.ID, metrics)
-		picks = append(picks, StockPick{
-			StockCode: candidate.Code,
-			StockName: candidate.Name,
-			Sector:    candidate.Sector,
-			Score:     round2(score),
-			Reasons:   explainPick(plan.ID, metrics),
-			Metrics:   metrics,
-		})
 	}
 
 	sort.SliceStable(picks, func(i, j int) bool {
@@ -258,6 +260,65 @@ func (e *Engine) Select(ctx context.Context, req SelectionRequest) (*SelectionRe
 	}, nil
 }
 
+func (e *Engine) evaluateCandidates(ctx context.Context, candidates []CandidateStock, planID string, lookback int) []evaluatedCandidate {
+	const maxConcurrentFetches = 6
+
+	results := make([]evaluatedCandidate, len(candidates))
+	sem := make(chan struct{}, maxConcurrentFetches)
+	var wg sync.WaitGroup
+	for index, candidate := range candidates {
+		index := index
+		candidate := candidate
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[index] = evaluatedCandidate{
+					index:    index,
+					rejected: RejectedStock{StockCode: candidate.Code, StockName: candidate.Name, Reason: ctx.Err().Error()},
+				}
+				return
+			}
+
+			klines, err := e.market.GetKLines(ctx, candidate.Code, "day", lookback+30)
+			if err != nil {
+				results[index] = evaluatedCandidate{
+					index:    index,
+					rejected: RejectedStock{StockCode: candidate.Code, StockName: candidate.Name, Reason: err.Error()},
+				}
+				return
+			}
+			if len(klines) < 30 {
+				results[index] = evaluatedCandidate{
+					index:    index,
+					rejected: RejectedStock{StockCode: candidate.Code, StockName: candidate.Name, Reason: "K线数据不足"},
+				}
+				return
+			}
+
+			metrics := calculateMetrics(klines)
+			score := scoreByPlan(planID, metrics)
+			results[index] = evaluatedCandidate{
+				index: index,
+				ok:    true,
+				pick: StockPick{
+					StockCode: candidate.Code,
+					StockName: candidate.Name,
+					Sector:    candidate.Sector,
+					Score:     round2(score),
+					Reasons:   explainPick(planID, metrics),
+					Metrics:   metrics,
+				},
+			}
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
 func RecommendedParams(strategyType string, picks []StockPick) map[string]interface{} {
 	switch strategyType {
 	case "double_ma":
@@ -287,6 +348,11 @@ func RecommendedParams(strategyType string, picks []StockPick) map[string]interf
 func planByID(id string) SelectionPlan {
 	for _, plan := range BuiltInPlans() {
 		if plan.ID == id {
+			return plan
+		}
+	}
+	for _, plan := range BuiltInPlans() {
+		if plan.ID == "balanced_smart" {
 			return plan
 		}
 	}
@@ -420,6 +486,8 @@ func scoreByPlan(planID string, m StockMetrics) float64 {
 		return clamp(45+m.MeanReversionScore*16-m.Return20*0.45-m.MaxDrawdown*0.2+volatilityBandScore(m.Volatility), 0, 100)
 	case "grid_suitable":
 		return clamp(m.GridSuitability, 0, 100)
+	case "institutional_ensemble":
+		return clamp(50+m.Return20*0.75+m.Return60*0.35+m.TrendStrength*1.8+(m.BreakoutStrength-90)*0.8+m.VolumeTrend*5+volatilityBandScore(m.Volatility)-m.MaxDrawdown*0.85, 0, 100)
 	default:
 		return clamp(45+m.Return20*0.6+m.Return60*0.3+m.TrendStrength*1.4+m.VolumeTrend*4-m.MaxDrawdown*0.3+volatilityBandScore(m.Volatility), 0, 100)
 	}
@@ -450,6 +518,11 @@ func explainPick(planID string, m StockMetrics) []string {
 		return append([]string{
 			fmt.Sprintf("网格适配分 %.2f，近期区间 %.2f-%.2f", m.GridSuitability, m.RecentLow, m.RecentHigh),
 			fmt.Sprintf("趋势不过分单边，60日收益 %.2f%%", m.Return60),
+		}, common...)
+	case "institutional_ensemble":
+		return append([]string{
+			fmt.Sprintf("多因子集成：趋势 %.2f%%，突破位置 %.2f%%，成交量比 %.2f", m.TrendStrength, m.BreakoutStrength, m.VolumeTrend),
+			fmt.Sprintf("风险调整：回撤 %.2f%%，波动 %.2f%%，避免只追高收益", m.MaxDrawdown, m.Volatility),
 		}, common...)
 	default:
 		return common

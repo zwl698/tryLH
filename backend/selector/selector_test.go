@@ -21,6 +21,16 @@ func (f fakeMarketData) GetKLines(ctx context.Context, stockCode string, period 
 	return rows, nil
 }
 
+type slowFakeMarketData struct {
+	fakeMarketData
+	delay time.Duration
+}
+
+func (f slowFakeMarketData) GetKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
+	time.Sleep(f.delay)
+	return f.fakeMarketData.GetKLines(ctx, stockCode, period, count)
+}
+
 func TestDefaultPlanForStrategy(t *testing.T) {
 	cases := map[string]string{
 		"double_ma":        "trend_breakout",
@@ -36,6 +46,62 @@ func TestDefaultPlanForStrategy(t *testing.T) {
 		if plan.ID != expectedPlan {
 			t.Fatalf("%s 默认选股方案应为 %s，实际 %s", strategyType, expectedPlan, plan.ID)
 		}
+	}
+}
+
+func TestEngineSelectFetchesCandidatesConcurrently(t *testing.T) {
+	codes := []string{"000001", "000002", "000003", "000004", "000005", "000006", "000007", "000008", "000009", "000010", "000011", "000012"}
+	rows := make(map[string][]models.KLine, len(codes))
+	for i, code := range codes {
+		rows[code] = makeTrendKLines(code, 10+float64(i), 0.003+float64(i)*0.0001, 90)
+	}
+	engine := NewEngine(slowFakeMarketData{
+		fakeMarketData: fakeMarketData{klines: rows},
+		delay:          40 * time.Millisecond,
+	})
+
+	start := time.Now()
+	result, err := engine.Select(context.Background(), SelectionRequest{
+		StrategyType:   "momentum",
+		CandidateCodes: codes,
+		TopN:           3,
+		LookbackDays:   80,
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("选股失败: %v", err)
+	}
+	if len(result.Picks) != 3 {
+		t.Fatalf("应返回3只股票，实际 %d", len(result.Picks))
+	}
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("选股应并发拉取候选K线，实际耗时 %v", elapsed)
+	}
+}
+
+func TestInstitutionalEnsemblePlanPenalizesHighDrawdown(t *testing.T) {
+	plan := planByID("institutional_ensemble")
+	if plan.ID != "institutional_ensemble" {
+		t.Fatal("应内置机构对标多因子集成选股方案")
+	}
+
+	lowRisk := StockMetrics{
+		Return20:         8,
+		Return60:         18,
+		TrendStrength:    3,
+		BreakoutStrength: 98,
+		Volatility:       30,
+		MaxDrawdown:      6,
+		VolumeTrend:      1.4,
+	}
+	highDrawdown := lowRisk
+	highDrawdown.Return20 = 12
+	highDrawdown.MaxDrawdown = 35
+
+	lowRiskScore := scoreByPlan(plan.ID, lowRisk)
+	highDrawdownScore := scoreByPlan(plan.ID, highDrawdown)
+	if lowRiskScore <= highDrawdownScore {
+		t.Fatalf("机构集成方案应优先风险调整后更稳的股票，低回撤 %.2f 高回撤 %.2f", lowRiskScore, highDrawdownScore)
 	}
 }
 

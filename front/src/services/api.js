@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const api = axios.create({
   baseURL: '',
-  timeout: 15000,
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -61,6 +61,7 @@ export const getStrategyTemplates = () => api.get('/api/v1/strategy-templates');
 export const getStockSelectionPlans = () => api.get('/api/v1/stock-selector/plans');
 export const getStockUniverse = () => api.get('/api/v1/stock-selector/universe');
 export const runStockSelection = (data) => api.post('/api/v1/stock-selector/run', data);
+export const getSmartTradeBenchmark = () => api.get('/api/v1/smart-trade/benchmark');
 export const runSmartTrade = (data) => api.post('/api/v1/smart-trade/run', data);
 export const applySmartTrade = (data) => api.post('/api/v1/smart-trade/apply', data);
 

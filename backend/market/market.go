@@ -528,9 +528,15 @@ type MarketService struct {
 	provider      DataProvider
 	logger        *zap.Logger
 	subscriptions map[string]bool
+	klineCache    map[string]cachedKLines
 	quoteChan     chan models.StockQuote
 	mu            sync.RWMutex
 	stopCh        chan struct{}
+}
+
+type cachedKLines struct {
+	rows      []models.KLine
+	expiresAt time.Time
 }
 
 // NewMarketService 创建行情服务
@@ -550,6 +556,7 @@ func NewMarketService(dataSource string, logger *zap.Logger) *MarketService {
 		provider:      provider,
 		logger:        logger,
 		subscriptions: make(map[string]bool),
+		klineCache:    make(map[string]cachedKLines),
 		quoteChan:     make(chan models.StockQuote, 1000),
 		stopCh:        make(chan struct{}),
 	}
@@ -567,7 +574,41 @@ func (s *MarketService) GetQuotes(ctx context.Context, stockCodes []string) (map
 
 // GetKLines 获取K线
 func (s *MarketService) GetKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
-	return s.provider.GetKLines(ctx, stockCode, period, count)
+	key := klineCacheKey(stockCode, period, count)
+	now := time.Now()
+	s.mu.RLock()
+	if cached, ok := s.klineCache[key]; ok && now.Before(cached.expiresAt) {
+		rows := cloneKLines(cached.rows)
+		s.mu.RUnlock()
+		return rows, nil
+	}
+	s.mu.RUnlock()
+
+	rows, err := s.provider.GetKLines(ctx, stockCode, period, count)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	s.klineCache[key] = cachedKLines{
+		rows:      cloneKLines(rows),
+		expiresAt: now.Add(2 * time.Minute),
+	}
+	s.mu.Unlock()
+	return rows, nil
+}
+
+func klineCacheKey(stockCode string, period string, count int) string {
+	return normalizeStockCode(stockCode) + "|" + strings.TrimSpace(period) + "|" + strconv.Itoa(count)
+}
+
+func cloneKLines(rows []models.KLine) []models.KLine {
+	if len(rows) == 0 {
+		return nil
+	}
+	cloned := make([]models.KLine, len(rows))
+	copy(cloned, rows)
+	return cloned
 }
 
 // GetIndexQuote 获取指数行情

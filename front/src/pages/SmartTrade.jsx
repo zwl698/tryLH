@@ -25,6 +25,7 @@ import {
   applySmartTrade,
   getStockSelectionPlans,
   getStockUniverse,
+  getSmartTradeBenchmark,
   getStrategyTemplates,
   runSmartTrade,
 } from '../services/api';
@@ -74,6 +75,7 @@ export default function SmartTradePage() {
   const [templates, setTemplates] = useState([]);
   const [plans, setPlans] = useState([]);
   const [universe, setUniverse] = useState([]);
+  const [benchmark, setBenchmark] = useState([]);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [result, setResult] = useState(null);
@@ -84,14 +86,16 @@ export default function SmartTradePage() {
 
   const fetchMeta = async () => {
     try {
-      const [templateData, planData, universeData] = await Promise.all([
+      const [templateData, planData, universeData, benchmarkData] = await Promise.all([
         getStrategyTemplates(),
         getStockSelectionPlans(),
         getStockUniverse(),
+        getSmartTradeBenchmark(),
       ]);
       setTemplates(templateData || []);
       setPlans(planData || []);
       setUniverse(universeData || []);
+      setBenchmark(benchmarkData || []);
       const defaultStrategy = 'momentum';
       form.setFieldsValue({
         strategy_type: defaultStrategy,
@@ -208,9 +212,20 @@ export default function SmartTradePage() {
     },
   ];
 
+  const candidateBacktestColumns = [
+    { title: '股票', dataIndex: 'stock_name', key: 'stock_name', render: (name, r) => `${name || r.stock_code} (${r.stock_code})` },
+    { title: '单股收益', dataIndex: 'total_return', key: 'total_return', align: 'right', render: v => `${Number(v || 0).toFixed(2)}%` },
+    { title: '最大回撤', dataIndex: 'max_drawdown', key: 'max_drawdown', align: 'right', render: v => `${Number(v || 0).toFixed(2)}%` },
+    { title: '夏普', dataIndex: 'sharpe_ratio', key: 'sharpe_ratio', align: 'right', render: v => Number(v || 0).toFixed(2) },
+    { title: '交易次数', dataIndex: 'total_trades', key: 'total_trades', align: 'right' },
+    { title: '综合排序分', dataIndex: 'rank_score', key: 'rank_score', align: 'right', render: v => <Tag color={v > 0 ? 'blue' : 'default'}>{Number(v || 0).toFixed(2)}</Tag> },
+  ];
+
   const templateOptions = templates.map(t => ({ value: t.type, label: t.name }));
   const planOptions = plans.map(plan => ({ value: plan.id, label: plan.name }));
   const universeOptions = universe.map(stock => ({ value: stock.code, label: `${stock.code} ${stock.name}` }));
+  const validation = result?.validation_summary || {};
+  const validationWarnings = validation.warnings || [];
 
   return (
     <Spin spinning={loading}>
@@ -223,6 +238,24 @@ export default function SmartTradePage() {
           description="选择策略后，系统会自动匹配选股方案、拉取真实K线、完成回测，并可一键应用到模拟交易策略。"
           style={{ marginBottom: 16 }}
         />
+
+        {benchmark.length > 0 && (
+          <Card title="机构对标能力" size="small" style={{ marginBottom: 16 }}>
+            <Row gutter={[12, 12]}>
+              {benchmark.map(item => (
+                <Col xs={24} md={12} lg={6} key={item.module}>
+                  <Space direction="vertical" size={4}>
+                    <Space>
+                      <Tag color={item.implemented ? 'green' : 'orange'}>{item.implemented ? '已接入' : '待接入'}</Tag>
+                      <Text strong>{item.module}</Text>
+                    </Space>
+                    <Text type="secondary">{item.system_field}</Text>
+                  </Space>
+                </Col>
+              ))}
+            </Row>
+          </Card>
+        )}
 
         <Card size="small" style={{ marginBottom: 16 }}>
           <Form form={form} layout="vertical">
@@ -310,12 +343,47 @@ export default function SmartTradePage() {
               />
             </Card>
 
+            {validationWarnings.length > 0 && (
+              <Alert
+                showIcon
+                type="warning"
+                message="策略验证风险提示"
+                description={(
+                  <Space direction="vertical" size={2}>
+                    {validationWarnings.map((warning, index) => <Text key={index}>{warning}</Text>)}
+                  </Space>
+                )}
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
+            <Card title="机构级验证摘要" size="small" style={{ marginBottom: 16 }}>
+              <Row gutter={[16, 16]}>
+                <Col xs={12} md={5}>
+                  <Statistic title="验证股票" value={validation.validated_count || 0} suffix={`/ ${validation.candidate_count || 0}`} />
+                </Col>
+                <Col xs={12} md={5}>
+                  <Statistic title="正收益数量" value={validation.positive_count || 0} />
+                </Col>
+                <Col xs={12} md={5}>
+                  <Statistic title="正收益率" value={Number(validation.positive_rate || 0)} precision={2} suffix="%" />
+                </Col>
+                <Col xs={12} md={5}>
+                  <Statistic title="最佳单股收益" value={Number(validation.best_return || 0)} precision={2} suffix="%" />
+                </Col>
+                <Col xs={12} md={4}>
+                  <Statistic title="最坏单股回撤" value={Number(validation.worst_drawdown || 0)} precision={2} suffix="%" />
+                </Col>
+              </Row>
+              {validation.method && <Text type="secondary">{validation.method}</Text>}
+            </Card>
+
             <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
               <Col xs={12} md={6}>
-                <Card size="small"><Statistic title="总收益" value={Number(result.backtest?.total_return || 0) * 100} precision={2} suffix="%" /></Card>
+                <Card size="small"><Statistic title="总收益" value={Number(result.backtest?.total_return || 0)} precision={2} suffix="%" /></Card>
               </Col>
               <Col xs={12} md={6}>
-                <Card size="small"><Statistic title="最大回撤" value={Number(result.backtest?.max_drawdown || 0) * 100} precision={2} suffix="%" /></Card>
+                <Card size="small"><Statistic title="最大回撤" value={Number(result.backtest?.max_drawdown || 0)} precision={2} suffix="%" /></Card>
               </Col>
               <Col xs={12} md={6}>
                 <Card size="small"><Statistic title="交易次数" value={result.backtest?.total_trades || 0} /></Card>
@@ -359,6 +427,16 @@ export default function SmartTradePage() {
                   <Tag key={key}>{key}: {String(value)}</Tag>
                 ))}
               </Space>
+            </Card>
+
+            <Card title="策略单股验证回测" size="small" style={{ marginTop: 16 }}>
+              <Table
+                rowKey="stock_code"
+                size="small"
+                columns={candidateBacktestColumns}
+                dataSource={result.candidate_backtests || []}
+                pagination={false}
+              />
             </Card>
           </>
         )}

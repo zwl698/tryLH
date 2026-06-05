@@ -2,12 +2,39 @@ package market
 
 import (
 	"aqsystem/models"
+	"context"
 	"testing"
 	"time"
 
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 )
+
+type countingKLineProvider struct {
+	calls int
+	rows  []models.KLine
+}
+
+func (p *countingKLineProvider) GetQuote(ctx context.Context, stockCode string) (*models.StockQuote, error) {
+	return nil, nil
+}
+
+func (p *countingKLineProvider) GetQuotes(ctx context.Context, stockCodes []string) (map[string]models.StockQuote, error) {
+	return map[string]models.StockQuote{}, nil
+}
+
+func (p *countingKLineProvider) GetKLines(ctx context.Context, stockCode string, period string, count int) ([]models.KLine, error) {
+	p.calls++
+	return p.rows, nil
+}
+
+func (p *countingKLineProvider) GetIndexQuote(ctx context.Context, indexCode string) (*models.StockQuote, error) {
+	return nil, nil
+}
+
+func (p *countingKLineProvider) Subscribe(ctx context.Context, stockCodes []string) error {
+	return nil
+}
 
 func TestToSinaCode(t *testing.T) {
 	tests := []struct {
@@ -29,6 +56,32 @@ func TestToSinaCode(t *testing.T) {
 		if result != tt.expected {
 			t.Errorf("toSinaCode(%s) = %s, 期望 %s", tt.input, result, tt.expected)
 		}
+	}
+}
+
+func TestMarketServiceCachesKLinesForRepeatedRequests(t *testing.T) {
+	logger := zap.NewNop()
+	provider := &countingKLineProvider{
+		rows: []models.KLine{
+			{
+				StockCode: "600000",
+				Period:    "day",
+				Close:     decimal.NewFromFloat(10),
+				Timestamp: time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local),
+			},
+		},
+	}
+	svc := NewMarketService("sina", logger)
+	svc.provider = provider
+
+	if _, err := svc.GetKLines(context.Background(), "600000", "day", 120); err != nil {
+		t.Fatalf("第一次获取K线失败: %v", err)
+	}
+	if _, err := svc.GetKLines(context.Background(), "600000", "day", 120); err != nil {
+		t.Fatalf("第二次获取K线失败: %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("相同K线请求应命中缓存，实际调用 provider %d 次", provider.calls)
 	}
 }
 

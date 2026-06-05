@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -128,6 +129,7 @@ func (s *Server) SetupRouter() *gin.Engine {
 		v1.GET("/stock-selector/plans", s.getStockSelectionPlans)
 		v1.GET("/stock-selector/universe", s.getStockUniverse)
 		v1.POST("/stock-selector/run", s.runStockSelection)
+		v1.GET("/smart-trade/benchmark", s.getSmartTradeBenchmark)
 		v1.POST("/smart-trade/run", s.runSmartTrade)
 		v1.POST("/smart-trade/apply", s.applySmartTrade)
 
@@ -552,6 +554,28 @@ type smartTradeApplyRequest struct {
 	AutoStart    bool                   `json:"auto_start"`
 }
 
+type candidateBacktest struct {
+	StockCode    string  `json:"stock_code"`
+	StockName    string  `json:"stock_name"`
+	TotalReturn  float64 `json:"total_return"`
+	MaxDrawdown  float64 `json:"max_drawdown"`
+	SharpeRatio  float64 `json:"sharpe_ratio"`
+	TotalTrades  int     `json:"total_trades"`
+	FinalCapital float64 `json:"final_capital"`
+	RankScore    float64 `json:"rank_score"`
+}
+
+type validationSummary struct {
+	CandidateCount int      `json:"candidate_count"`
+	ValidatedCount int      `json:"validated_count"`
+	PositiveCount  int      `json:"positive_count"`
+	PositiveRate   float64  `json:"positive_rate"`
+	BestReturn     float64  `json:"best_return"`
+	WorstDrawdown  float64  `json:"worst_drawdown"`
+	Method         string   `json:"method"`
+	Warnings       []string `json:"warnings"`
+}
+
 func (s *Server) getStockSelectionPlans(c *gin.Context) {
 	s.responseSuccess(c, selector.BuiltInPlans())
 }
@@ -575,6 +599,35 @@ func (s *Server) runStockSelection(c *gin.Context) {
 	s.responseSuccess(c, result)
 }
 
+func (s *Server) getSmartTradeBenchmark(c *gin.Context) {
+	s.responseSuccess(c, []gin.H{
+		{
+			"module":       "数据与因子",
+			"benchmark":    "公开机构资料强调大规模数据、AI/多因子和持续因子挖掘。",
+			"implemented":  true,
+			"system_field": "核心A股池、行情K线、策略专属选股方案、机构对标多因子集成。",
+		},
+		{
+			"module":       "策略验证",
+			"benchmark":    "研究流程通常不会只看一次组合回测，而会先做候选标的验证和风险调整排序。",
+			"implemented":  true,
+			"system_field": "因子初筛后逐只股票运行策略回测，再按收益、回撤、夏普和交易次数综合排序。",
+		},
+		{
+			"module":       "组合与风控",
+			"benchmark":    "成熟量化系统重视回撤、波动、风险敞口和分散度。",
+			"implemented":  true,
+			"system_field": "验证摘要输出正收益率、最佳收益、最坏回撤，并给出过拟合/高回撤提示。",
+		},
+		{
+			"module":       "执行闭环",
+			"benchmark":    "生产系统需要从研究、模拟到实盘执行的一体化链路。",
+			"implemented":  true,
+			"system_field": "一键选股、回测、参数生成、应用到模拟交易或当前已登录实盘券商。",
+		},
+	})
+}
+
 func (s *Server) runSmartTrade(c *gin.Context) {
 	var req smartTradeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -582,12 +635,27 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 		return
 	}
 
+	requestedTopN := req.TopN
+	if requestedTopN <= 0 {
+		requestedTopN = selector.DefaultPlanForStrategy(req.StrategyType).DefaultTopN
+	}
+	if requestedTopN <= 0 {
+		requestedTopN = 5
+	}
+	selectionTopN := requestedTopN * 4
+	if selectionTopN < 10 {
+		selectionTopN = 10
+	}
+	if selectionTopN > 15 {
+		selectionTopN = 15
+	}
+
 	selection, err := selector.NewEngine(s.marketSvc).Select(c.Request.Context(), selector.SelectionRequest{
 		StrategyType:   req.StrategyType,
 		PlanID:         req.PlanID,
 		Universe:       req.Universe,
 		CandidateCodes: req.CandidateCodes,
-		TopN:           req.TopN,
+		TopN:           selectionTopN,
 		LookbackDays:   req.LookbackDays,
 	})
 	if err != nil {
@@ -597,6 +665,25 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 	if len(selection.Picks) == 0 {
 		s.responseError(c, http.StatusBadGateway, "智能选股未选出可交易股票")
 		return
+	}
+
+	startDate, endDate, err := parseSmartDateRange(req.StartDate, req.EndDate, time.Now())
+	if err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	candidateBacktests := s.validateCandidatesByBacktest(c.Request.Context(), req.StrategyType, selection.Picks, req.Params, startDate, endDate, req.InitCapital)
+	rankedBacktests := rankCandidateBacktests(candidateBacktests, requestedTopN)
+	summary := buildValidationSummary(candidateBacktests)
+	if len(rankedBacktests) > 0 {
+		selection.Picks = reorderPicksByBacktest(selection.Picks, rankedBacktests)
+	}
+	if len(selection.Picks) > requestedTopN {
+		selection.Picks = selection.Picks[:requestedTopN]
+		for i := range selection.Picks {
+			selection.Picks[i].Rank = i + 1
+		}
 	}
 
 	stocks := make([]string, 0, len(selection.Picks))
@@ -609,12 +696,6 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 		params[k] = v
 	}
 
-	startDate, endDate, err := parseSmartDateRange(req.StartDate, req.EndDate, time.Now())
-	if err != nil {
-		s.responseError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
 	result, err := s.runBacktestInternal(c.Request.Context(), req.StrategyType, stocks, params, startDate, endDate, req.InitCapital)
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, "智能回测失败: "+err.Error())
@@ -623,17 +704,20 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 
 	s.responseSuccess(c, gin.H{
 		"workflow": []gin.H{
-			{"step": "select", "status": "done", "text": fmt.Sprintf("自动选出%d只股票", len(stocks))},
-			{"step": "params", "status": "done", "text": "已按策略生成默认参数"},
+			{"step": "select", "status": "done", "text": fmt.Sprintf("因子初筛%d只候选", len(candidateBacktests))},
+			{"step": "validate", "status": "done", "text": fmt.Sprintf("二次验证%d只，正收益%d只", summary.ValidatedCount, summary.PositiveCount)},
+			{"step": "params", "status": "done", "text": "已按策略和股票特征生成参数"},
 			{"step": "backtest", "status": "done", "text": "已完成真实K线回测"},
 			{"step": "apply", "status": "ready", "text": "可一键应用到模拟交易或当前实盘连接"},
 		},
-		"selection":          selection,
-		"stocks":             stocks,
-		"recommended_params": params,
-		"backtest":           result,
-		"start_date":         startDate.Format("2006-01-02"),
-		"end_date":           endDate.Format("2006-01-02"),
+		"selection":           selection,
+		"stocks":              stocks,
+		"recommended_params":  params,
+		"candidate_backtests": rankedBacktests,
+		"validation_summary":  summary,
+		"backtest":            result,
+		"start_date":          startDate.Format("2006-01-02"),
+		"end_date":            endDate.Format("2006-01-02"),
 	})
 }
 
@@ -818,6 +902,137 @@ func (s *Server) runBacktestInternal(ctx context.Context, strategyType string, s
 	}
 
 	return s.btEngine.Run(ctx, strat, klines, startDate, endDate, initCapital)
+}
+
+func (s *Server) validateCandidatesByBacktest(ctx context.Context, strategyType string, picks []selector.StockPick, extraParams map[string]interface{}, startDate, endDate time.Time, initialCapital float64) []candidateBacktest {
+	results := make([]candidateBacktest, 0, len(picks))
+	for _, pick := range picks {
+		params := selector.RecommendedParams(strategyType, []selector.StockPick{pick})
+		for k, v := range extraParams {
+			params[k] = v
+		}
+		result, err := s.runBacktestInternal(ctx, strategyType, []string{pick.StockCode}, params, startDate, endDate, initialCapital)
+		if err != nil || result == nil {
+			continue
+		}
+		totalReturn := result.TotalReturn.InexactFloat64()
+		maxDrawdown := result.MaxDrawdown.InexactFloat64()
+		sharpe := result.SharpeRatio.InexactFloat64()
+		finalCapital := result.FinalCapital.InexactFloat64()
+		results = append(results, candidateBacktest{
+			StockCode:    pick.StockCode,
+			StockName:    pick.StockName,
+			TotalReturn:  roundFloat(totalReturn, 2),
+			MaxDrawdown:  roundFloat(maxDrawdown, 2),
+			SharpeRatio:  roundFloat(sharpe, 2),
+			TotalTrades:  result.TotalTrades,
+			FinalCapital: roundFloat(finalCapital, 2),
+			RankScore:    roundFloat(candidateRankScore(totalReturn, maxDrawdown, sharpe, result.TotalTrades), 2),
+		})
+	}
+	return results
+}
+
+func rankCandidateBacktests(candidates []candidateBacktest, topN int) []candidateBacktest {
+	ranked := append([]candidateBacktest(nil), candidates...)
+	for i := range ranked {
+		if ranked[i].RankScore == 0 {
+			ranked[i].RankScore = roundFloat(candidateRankScore(ranked[i].TotalReturn, ranked[i].MaxDrawdown, ranked[i].SharpeRatio, ranked[i].TotalTrades), 2)
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].RankScore == ranked[j].RankScore {
+			return ranked[i].StockCode < ranked[j].StockCode
+		}
+		return ranked[i].RankScore > ranked[j].RankScore
+	})
+	if topN > 0 && topN < len(ranked) {
+		ranked = ranked[:topN]
+	}
+	return ranked
+}
+
+func buildValidationSummary(candidates []candidateBacktest) validationSummary {
+	summary := validationSummary{
+		CandidateCount: len(candidates),
+		ValidatedCount: len(candidates),
+		Method:         "因子初筛 -> 单股策略回测 -> 收益/回撤/夏普综合排序",
+		Warnings:       []string{},
+	}
+	if len(candidates) == 0 {
+		summary.Warnings = append(summary.Warnings, "候选股票未完成二次验证，建议检查行情数据或缩小股票池。")
+		return summary
+	}
+
+	bestReturn := candidates[0].TotalReturn
+	worstDrawdown := candidates[0].MaxDrawdown
+	for _, candidate := range candidates {
+		if candidate.TotalReturn > 0 {
+			summary.PositiveCount++
+		}
+		if candidate.TotalReturn > bestReturn {
+			bestReturn = candidate.TotalReturn
+		}
+		if candidate.MaxDrawdown > worstDrawdown {
+			worstDrawdown = candidate.MaxDrawdown
+		}
+	}
+
+	summary.PositiveRate = roundFloat(float64(summary.PositiveCount)/float64(len(candidates))*100, 2)
+	summary.BestReturn = roundFloat(bestReturn, 2)
+	summary.WorstDrawdown = roundFloat(worstDrawdown, 2)
+	if summary.PositiveCount == 0 {
+		summary.Warnings = append(summary.Warnings, "当前候选策略验证全部为非正收益，系统不会把这视为优质组合，建议换策略或扩大候选池。")
+	} else if summary.PositiveRate < 50 {
+		summary.Warnings = append(summary.Warnings, "二次验证正收益比例低于50%，结果可能依赖少数股票，建议谨慎模拟观察。")
+	}
+	if summary.WorstDrawdown >= 20 {
+		summary.Warnings = append(summary.Warnings, "候选股中存在单股最大回撤超过20%的样本，已在排序中惩罚，但仍需关注仓位和止损。")
+	}
+	if summary.BestReturn <= 0 {
+		summary.Warnings = append(summary.Warnings, "最佳单股验证收益仍未转正，这组参数不适合直接实盘。")
+	}
+	return summary
+}
+
+func candidateRankScore(totalReturn, maxDrawdown, sharpe float64, totalTrades int) float64 {
+	tradeBonus := 0.0
+	if totalTrades > 0 {
+		tradeBonus = 3
+	}
+	return totalReturn - maxDrawdown*0.65 + sharpe*4 + tradeBonus
+}
+
+func reorderPicksByBacktest(picks []selector.StockPick, ranked []candidateBacktest) []selector.StockPick {
+	byCode := make(map[string]selector.StockPick, len(picks))
+	for _, pick := range picks {
+		byCode[pick.StockCode] = pick
+	}
+	result := make([]selector.StockPick, 0, len(ranked))
+	for _, bt := range ranked {
+		pick, ok := byCode[bt.StockCode]
+		if !ok {
+			continue
+		}
+		pick.Rank = len(result) + 1
+		pick.Score = roundFloat((pick.Score*0.35)+(bt.RankScore*0.65), 2)
+		pick.Reasons = append([]string{
+			fmt.Sprintf("策略单股验证回测：收益 %.2f%%，回撤 %.2f%%，夏普 %.2f，交易 %d 次", bt.TotalReturn, bt.MaxDrawdown, bt.SharpeRatio, bt.TotalTrades),
+		}, pick.Reasons...)
+		result = append(result, pick)
+	}
+	return result
+}
+
+func roundFloat(v float64, places int) float64 {
+	multiplier := 1.0
+	for i := 0; i < places; i++ {
+		multiplier *= 10
+	}
+	if v >= 0 {
+		return float64(int(v*multiplier+0.5)) / multiplier
+	}
+	return float64(int(v*multiplier-0.5)) / multiplier
 }
 
 func newStrategyFromConfig(stratConfig models.StrategyConfig, logger *zap.Logger) (strategy.Strategy, error) {

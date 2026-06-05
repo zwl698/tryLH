@@ -2,6 +2,7 @@ package api
 
 import (
 	"aqsystem/models"
+	"aqsystem/selector"
 	"testing"
 	"time"
 
@@ -84,5 +85,63 @@ func TestNewStrategyFromConfigCreatesSmartStrategy(t *testing.T) {
 	}
 	if len(strat.GetConfig().Stocks) != 2 {
 		t.Fatalf("智能策略应保留选股结果: %+v", strat.GetConfig().Stocks)
+	}
+}
+
+func TestRankCandidateBacktestsPrefersPositiveRiskAdjustedReturn(t *testing.T) {
+	candidates := []candidateBacktest{
+		{StockCode: "000001", TotalReturn: -3, MaxDrawdown: 5, SharpeRatio: -0.2, TotalTrades: 2},
+		{StockCode: "000002", TotalReturn: 8, MaxDrawdown: 4, SharpeRatio: 1.1, TotalTrades: 3},
+		{StockCode: "000003", TotalReturn: 10, MaxDrawdown: 18, SharpeRatio: 0.4, TotalTrades: 4},
+	}
+
+	ranked := rankCandidateBacktests(candidates, 2)
+	if len(ranked) != 2 {
+		t.Fatalf("应返回2个候选，实际 %d", len(ranked))
+	}
+	if ranked[0].StockCode != "000002" {
+		t.Fatalf("应优先选择风险调整后更好的股票，实际 %+v", ranked[0])
+	}
+	if ranked[0].RankScore <= ranked[1].RankScore {
+		t.Fatalf("排序分数应递减: %+v", ranked)
+	}
+}
+
+func TestReorderPicksByBacktestResetsRanks(t *testing.T) {
+	picks := []selector.StockPick{
+		{Rank: 1, StockCode: "000001", Score: 70},
+		{Rank: 2, StockCode: "000002", Score: 65},
+	}
+	ranked := []candidateBacktest{
+		{StockCode: "000002", TotalReturn: 10, MaxDrawdown: 3, SharpeRatio: 1.2, TotalTrades: 2, RankScore: 15},
+	}
+
+	reordered := reorderPicksByBacktest(picks, ranked)
+	if len(reordered) != 1 {
+		t.Fatalf("应只保留回测排序股票，实际 %+v", reordered)
+	}
+	if reordered[0].StockCode != "000002" || reordered[0].Rank != 1 {
+		t.Fatalf("二次验证重排后应重置排名，实际 %+v", reordered[0])
+	}
+}
+
+func TestBuildValidationSummaryReportsPositiveRateAndWarnings(t *testing.T) {
+	summary := buildValidationSummary([]candidateBacktest{
+		{StockCode: "000001", TotalReturn: -2, MaxDrawdown: 6, SharpeRatio: -0.2},
+		{StockCode: "000002", TotalReturn: 8, MaxDrawdown: 4, SharpeRatio: 1.1},
+		{StockCode: "000003", TotalReturn: 4, MaxDrawdown: 24, SharpeRatio: 0.2},
+	})
+
+	if summary.ValidatedCount != 3 || summary.PositiveCount != 2 {
+		t.Fatalf("验证摘要数量不正确: %+v", summary)
+	}
+	if summary.PositiveRate != 66.67 {
+		t.Fatalf("正收益率应按百分比四舍五入，实际 %.2f", summary.PositiveRate)
+	}
+	if summary.BestReturn != 8 || summary.WorstDrawdown != 24 {
+		t.Fatalf("最佳收益/最坏回撤不正确: %+v", summary)
+	}
+	if len(summary.Warnings) == 0 {
+		t.Fatalf("高回撤候选应产生风险提示: %+v", summary)
 	}
 }

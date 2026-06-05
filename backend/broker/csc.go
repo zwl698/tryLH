@@ -22,7 +22,7 @@ import (
 //
 // 使用前需要：
 // - 在中信建投开通量化交易权限
-// - 获取AppKey和AppSecret
+// - 常规登录使用资金账号和交易密码；如券商网关要求应用鉴权，可额外配置AppKey和AppSecret
 // - 如使用DLL方式，需安装中信建投交易终端
 type CSCBroker struct {
 	mu        sync.RWMutex
@@ -78,16 +78,22 @@ func (b *CSCBroker) Login(ctx context.Context) error {
 
 	b.logger.Info("正在连接中信建投证券...", zap.String("account", b.config.AccountID))
 
+	loginBody := map[string]interface{}{
+		"account_id": b.config.AccountID,
+		"password":   b.config.Password,
+		"mac_addr":   "00:00:00:00:00:00", // 终端MAC地址
+		"ip_addr":    "127.0.0.1",         // 终端IP地址
+	}
+	if b.config.AppKey != "" {
+		loginBody["app_key"] = b.config.AppKey
+	}
+	if b.config.AppSecret != "" {
+		loginBody["app_secret"] = b.config.AppSecret
+	}
+
 	// 第一步：获取Token
 	resp, err := b.client.R().
-		SetBody(map[string]interface{}{
-			"app_key":    b.config.AppKey,
-			"app_secret": b.config.AppSecret,
-			"account_id": b.config.AccountID,
-			"password":   b.config.Password,
-			"mac_addr":   "00:00:00:00:00:00", // 终端MAC地址
-			"ip_addr":    "127.0.0.1",         // 终端IP地址
-		}).
+		SetBody(loginBody).
 		SetResult(map[string]interface{}{}).
 		Post("/auth/login")
 

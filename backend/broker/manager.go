@@ -65,8 +65,8 @@ func SupportedBrokerProviders() []BrokerProvider {
 		{
 			Type:         "csc",
 			Name:         "中信建投证券",
-			Description:  "通过已开通的中信建投量化/API交易网关接入真实或仿真账户。",
-			Requires:     []string{"api_url", "account_id", "password", "app_key", "app_secret"},
+			Description:  "通过已开通的中信建投交易接口接入真实或仿真账户，常规登录只需资金账号和交易密码。",
+			Requires:     []string{"account_id", "password"},
 			SupportsLive: true,
 		},
 		{

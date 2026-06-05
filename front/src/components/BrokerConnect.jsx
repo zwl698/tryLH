@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {Alert, Badge, Button, Checkbox, Col, Form, Input, message, Modal, Row, Select, Space, Tag, Tooltip} from 'antd';
+import {Alert, Badge, Button, Checkbox, Col, Collapse, Form, Input, message, Modal, Row, Select, Space, Tag, Tooltip} from 'antd';
 import {LoginOutlined, LogoutOutlined, SafetyCertificateOutlined} from '@ant-design/icons';
 import {brokerLogin, brokerLogout, getBrokerProviders, getBrokerStatus} from '../services/api';
 
@@ -9,9 +9,16 @@ const DEFAULT_BROKER_PROVIDERS = [
   { type: 'xtquant', name: 'QMT / 迅投', supports_live: true },
   { type: 'cj', name: '长江证券', supports_live: true },
 ];
+const CSC_LIVE_API_URL = 'https://quant.csc108.com/api/v1';
+const CSC_DEMO_API_URL = 'https://quant-demo.csc108.com/api/v1';
 
 function providerName(providers, type) {
   return (providers.find(p => p.type === type) || {}).name || type || '未选择';
+}
+
+function defaultApiUrl(type, isDemo) {
+  if (type === 'csc') return isDemo ? CSC_DEMO_API_URL : CSC_LIVE_API_URL;
+  return '';
 }
 
 function brokerTag(status) {
@@ -32,7 +39,6 @@ export default function BrokerConnect({compact = false, onChanged}) {
   const [loading, setLoading] = useState(false);
   const [form] = Form.useForm();
   const selectedType = Form.useWatch('type', form) || 'csc';
-  const selectedIsDemo = Form.useWatch('is_demo', form);
 
   useEffect(() => {
     refresh();
@@ -60,16 +66,16 @@ export default function BrokerConnect({compact = false, onChanged}) {
     const current = status?.current || {};
     const type = current.type && current.type !== 'simulated' ? current.type : 'csc';
     const sameType = current.type === type;
+    const isDemo = sameType ? current.is_demo === true : false;
     form.setFieldsValue({
       type,
       id: sameType && current.id ? current.id : `${type}_runtime`,
       name: sameType && current.name ? current.name : providerName(providers, type),
-      api_url: sameType ? current.api_url || '' : '',
+      api_url: sameType ? current.api_url || defaultApiUrl(type, isDemo) : defaultApiUrl(type, isDemo),
       account_id: sameType ? current.account_id || '' : '',
-      is_demo: sameType ? current.is_demo !== false : true,
+      is_demo: isDemo,
       comm_type: sameType ? current.comm_type || 'http' : 'http',
       app_key: sameType ? current.app_key || '' : '',
-      confirm_live: false,
     });
     setModalOpen(true);
   };
@@ -78,12 +84,6 @@ export default function BrokerConnect({compact = false, onChanged}) {
     try {
       const values = await form.validateFields();
       const provider = providers.find(p => p.type === values.type);
-      const isRealBroker = values.type !== 'simulated';
-      const isLiveTrading = isRealBroker && values.is_demo === false;
-      if (isLiveTrading && !values.confirm_live) {
-        messageApi.error('实盘登录前必须确认已开通权限并理解真实资金风险');
-        return;
-      }
 
       setLoading(true);
       const payload = {
@@ -93,7 +93,7 @@ export default function BrokerConnect({compact = false, onChanged}) {
         api_url: values.api_url || '',
         account_id: values.account_id || '',
         password: values.password || '',
-        is_demo: values.is_demo !== false,
+        is_demo: values.type === 'simulated' ? true : values.is_demo === true,
         comm_type: values.comm_type || 'http',
         app_key: values.app_key || '',
         app_secret: values.app_secret || '',
@@ -103,7 +103,7 @@ export default function BrokerConnect({compact = false, onChanged}) {
       const nextStatus = data?.status || null;
       setStatus(nextStatus);
       setModalOpen(false);
-      form.resetFields(['password', 'app_secret', 'confirm_live']);
+      form.resetFields(['password', 'app_secret']);
       messageApi.success(`${provider?.name || '券商'}登录成功`);
       onChanged?.(nextStatus);
     } catch (e) {
@@ -171,7 +171,7 @@ export default function BrokerConnect({compact = false, onChanged}) {
         title="运行时券商切换与登录"
         open={modalOpen}
         onOk={handleLogin}
-        onCancel={() => { setModalOpen(false); form.resetFields(['password', 'app_secret', 'confirm_live']); }}
+        onCancel={() => { setModalOpen(false); form.resetFields(['password', 'app_secret']); }}
         okText="登录并切换"
         cancelText="取消"
         width={660}
@@ -183,7 +183,7 @@ export default function BrokerConnect({compact = false, onChanged}) {
           style={{ marginBottom: 16 }}
           message={selectedType === 'csc' ? '中信建投实盘接入' : '运行时券商连接'}
           description={selectedType === 'csc'
-            ? '这里会直接创建中信建投运行时连接。登录成功后，手动下单、策略实时信号和风控检查都会使用该券商连接。'
+            ? '只需填写资金账号和交易密码。系统已默认中信建投实盘网关、HTTP通信和连接名称；特殊环境可展开高级配置。'
             : selectedType === 'simulated'
               ? '模拟券商只用于开发、演示和策略联调，不连接真实资金账户。'
               : '请确认已取得对应券商的API/SDK授权和交易权限。'}
@@ -196,9 +196,9 @@ export default function BrokerConnect({compact = false, onChanged}) {
             type: 'csc',
             id: 'csc_runtime',
             name: '中信建投证券',
-            is_demo: true,
+            api_url: CSC_LIVE_API_URL,
+            is_demo: false,
             comm_type: 'http',
-            confirm_live: false,
           }}
         >
           <Row gutter={16}>
@@ -211,42 +211,31 @@ export default function BrokerConnect({compact = false, onChanged}) {
                   }))}
                   onChange={(type) => {
                     const provider = providers.find(p => p.type === type);
+                    const isDemo = type === 'simulated';
                     form.setFieldsValue({
                       id: `${type}_runtime`,
                       name: provider?.name || type,
-                      is_demo: type === 'simulated' ? true : form.getFieldValue('is_demo') !== false,
-                      confirm_live: false,
+                      api_url: defaultApiUrl(type, isDemo),
+                      is_demo: isDemo,
+                      comm_type: 'http',
+                      app_key: '',
+                      app_secret: '',
                     });
                   }}
                 />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="环境" name="is_demo" valuePropName="checked">
-                <Checkbox disabled={selectedType === 'simulated'}>仿真/模拟环境</Checkbox>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="连接ID" name="id">
-                <Input placeholder="如 csc_runtime" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="显示名称" name="name">
-                <Input placeholder="如 中信建投证券" />
+              <Form.Item label="连接模式">
+                <Tag color={selectedType === 'simulated' ? 'default' : 'red'} style={{ marginTop: 4 }}>
+                  {selectedType === 'simulated' ? '模拟账户' : '实盘默认'}
+                </Tag>
               </Form.Item>
             </Col>
           </Row>
 
           {selectedType !== 'simulated' && (
             <>
-              <Form.Item label="API网关地址" name="api_url">
-                <Input placeholder="券商提供的量化交易网关地址，如 https://.../api/v1" />
-              </Form.Item>
-
               <Row gutter={16}>
                 <Col span={12}>
                   <Form.Item label="资金账号" name="account_id" rules={[{ required: true, message: '请输入资金账号' }]}>
@@ -260,44 +249,71 @@ export default function BrokerConnect({compact = false, onChanged}) {
                 </Col>
               </Row>
 
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item label="通信方式" name="comm_type">
-                    <Select options={[
-                      { value: 'http', label: 'HTTP API' },
-                      { value: 'tcp', label: 'TCP 网关' },
-                      { value: 'dll', label: '本地 DLL/终端' },
-                    ]} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item label="AppKey" name="app_key" rules={selectedType === 'csc' ? [{ required: true, message: '请输入AppKey' }] : []}>
-                    <Input autoComplete="off" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item label="AppSecret" name="app_secret" rules={selectedType === 'csc' ? [{ required: true, message: '请输入AppSecret' }] : []}>
-                <Input.Password autoComplete="new-password" />
-              </Form.Item>
-
-              {selectedIsDemo === false && (
-                <Form.Item
-                  name="confirm_live"
-                  valuePropName="checked"
-                  rules={[
-                    {
-                      validator: (_, value) => value
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请确认实盘交易风险')),
-                    },
-                  ]}
-                >
-                  <Checkbox>
-                    我确认该账户为真实资金账户，已开通券商量化/API交易权限，并允许系统将策略信号提交为真实委托
-                  </Checkbox>
-                </Form.Item>
-              )}
+              <Collapse
+                ghost
+                size="small"
+                items={[{
+                  key: 'advanced',
+                  label: '高级配置',
+                  children: (
+                    <>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="连接ID" name="id">
+                            <Input placeholder="如 csc_runtime" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="显示名称" name="name">
+                            <Input placeholder="如 中信建投证券" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item label="API网关地址" name="api_url">
+                        <Input placeholder="券商提供的量化交易网关地址" />
+                      </Form.Item>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="通信方式" name="comm_type">
+                            <Select options={[
+                              { value: 'http', label: 'HTTP API' },
+                              { value: 'tcp', label: 'TCP 网关' },
+                              { value: 'dll', label: '本地 DLL/终端' },
+                            ]} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="环境" name="is_demo" valuePropName="checked">
+                            <Checkbox
+                              onChange={(event) => {
+                                if (selectedType !== 'csc') return;
+                                const currentUrl = form.getFieldValue('api_url');
+                                if (!currentUrl || currentUrl === CSC_LIVE_API_URL || currentUrl === CSC_DEMO_API_URL) {
+                                  form.setFieldsValue({ api_url: defaultApiUrl('csc', event.target.checked) });
+                                }
+                              }}
+                            >
+                              使用仿真环境
+                            </Checkbox>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="AppKey（可选）" name="app_key">
+                            <Input autoComplete="off" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="AppSecret（可选）" name="app_secret">
+                            <Input.Password autoComplete="new-password" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </>
+                  ),
+                }]}
+              />
             </>
           )}
         </Form>

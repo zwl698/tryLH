@@ -6,6 +6,7 @@ import {
     Card,
     Checkbox,
     Col,
+    Collapse,
     Form,
     Input,
     InputNumber,
@@ -38,9 +39,16 @@ const DEFAULT_BROKER_PROVIDERS = [
   { type: 'xtquant', name: 'QMT / 迅投', supports_live: true },
   { type: 'cj', name: '长江证券', supports_live: true },
 ];
+const CSC_LIVE_API_URL = 'https://quant.csc108.com/api/v1';
+const CSC_DEMO_API_URL = 'https://quant-demo.csc108.com/api/v1';
 
 function providerName(providers, type) {
   return (providers.find(p => p.type === type) || {}).name || type || '未选择';
+}
+
+function defaultApiUrl(type, isDemo) {
+  if (type === 'csc') return isDemo ? CSC_DEMO_API_URL : CSC_LIVE_API_URL;
+  return '';
 }
 
 export default function TradePage() {
@@ -57,7 +65,6 @@ export default function TradePage() {
   const [loginForm] = Form.useForm();
   const [loggedIn, setLoggedIn] = useState(false);
   const selectedBrokerType = Form.useWatch('type', loginForm) || 'csc';
-  const selectedIsDemo = Form.useWatch('is_demo', loginForm);
 
   useEffect(() => {
     fetchBrokerProviders();
@@ -94,16 +101,16 @@ export default function TradePage() {
     const current = brokerStatus?.current || {};
     const type = current.type && current.type !== 'simulated' ? current.type : 'csc';
     const isSameType = current.type === type;
+    const isDemo = isSameType ? current.is_demo === true : false;
     loginForm.setFieldsValue({
       type,
       id: isSameType && current.id ? current.id : `${type}_runtime`,
       name: isSameType && current.name ? current.name : providerName(brokerProviders, type),
-      api_url: isSameType ? current.api_url || '' : '',
+      api_url: isSameType ? current.api_url || defaultApiUrl(type, isDemo) : defaultApiUrl(type, isDemo),
       account_id: isSameType ? current.account_id || '' : '',
-      is_demo: isSameType ? current.is_demo !== false : true,
+      is_demo: isDemo,
       comm_type: isSameType ? current.comm_type || 'http' : 'http',
       app_key: isSameType ? current.app_key || '' : '',
-      confirm_live: false,
     });
     setLoginModal(true);
   };
@@ -112,12 +119,6 @@ export default function TradePage() {
     try {
       const values = await loginForm.validateFields();
       const provider = brokerProviders.find(p => p.type === values.type);
-      const isRealBroker = values.type !== 'simulated';
-      const isLiveTrading = isRealBroker && values.is_demo === false;
-      if (isLiveTrading && !values.confirm_live) {
-        messageApi.error('实盘登录前必须确认已开通权限并理解真实资金风险');
-        return;
-      }
 
       const payload = {
         id: values.id || `${values.type}_runtime`,
@@ -126,7 +127,7 @@ export default function TradePage() {
         api_url: values.api_url || '',
         account_id: values.account_id || '',
         password: values.password || '',
-        is_demo: values.is_demo !== false,
+        is_demo: values.type === 'simulated' ? true : values.is_demo === true,
         comm_type: values.comm_type || 'http',
         app_key: values.app_key || '',
         app_secret: values.app_secret || '',
@@ -136,7 +137,7 @@ export default function TradePage() {
       setBrokerStatus(data?.status || null);
       messageApi.success(`${provider?.name || '券商'}登录成功`);
       setLoginModal(false);
-      loginForm.resetFields(['password', 'app_secret', 'confirm_live']);
+      loginForm.resetFields(['password', 'app_secret']);
       setLoggedIn(true);
       fetchData();
     } catch (e) {
@@ -359,7 +360,7 @@ export default function TradePage() {
         title="连接券商"
         open={loginModal}
         onOk={handleLogin}
-        onCancel={() => { setLoginModal(false); loginForm.resetFields(['password', 'app_secret', 'confirm_live']); }}
+        onCancel={() => { setLoginModal(false); loginForm.resetFields(['password', 'app_secret']); }}
         okText="登录"
         cancelText="取消"
         width={620}
@@ -370,7 +371,7 @@ export default function TradePage() {
           style={{ marginBottom: 16 }}
           message={selectedBrokerType === 'csc' ? '中信建投实盘接入' : '券商连接'}
           description={selectedBrokerType === 'csc'
-            ? '需要已在中信建投开通量化/API交易权限，并填写券商提供的交易网关、资金账号、交易密码、AppKey 和 AppSecret。凭据只在本次运行内存中使用，不会保存到前端。'
+            ? '只需填写资金账号和交易密码。系统已默认中信建投实盘网关、HTTP通信和连接名称；特殊环境可展开高级配置。'
             : selectedBrokerType === 'simulated'
               ? '模拟券商不连接真实资金账户，适合联调策略和手动下单流程。'
               : '请确认已取得对应券商的API/SDK授权和交易权限。'}
@@ -383,9 +384,9 @@ export default function TradePage() {
             type: 'csc',
             id: 'csc_runtime',
             name: '中信建投证券',
-            is_demo: true,
+            api_url: CSC_LIVE_API_URL,
+            is_demo: false,
             comm_type: 'http',
-            confirm_live: false,
           }}
         >
           <Row gutter={16}>
@@ -398,42 +399,31 @@ export default function TradePage() {
                   }))}
                   onChange={(type) => {
                     const provider = brokerProviders.find(p => p.type === type);
+                    const isDemo = type === 'simulated';
                     loginForm.setFieldsValue({
                       id: `${type}_runtime`,
                       name: provider?.name || type,
-                      is_demo: type === 'simulated' ? true : loginForm.getFieldValue('is_demo') !== false,
-                      confirm_live: false,
+                      api_url: defaultApiUrl(type, isDemo),
+                      is_demo: isDemo,
+                      comm_type: 'http',
+                      app_key: '',
+                      app_secret: '',
                     });
                   }}
                 />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="环境" name="is_demo" valuePropName="checked">
-                <Checkbox disabled={selectedBrokerType === 'simulated'}>仿真/模拟环境</Checkbox>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="连接ID" name="id">
-                <Input placeholder="如 csc_runtime" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="显示名称" name="name">
-                <Input placeholder="如 中信建投证券" />
+              <Form.Item label="连接模式">
+                <Tag color={selectedBrokerType === 'simulated' ? 'default' : 'red'} style={{ marginTop: 4 }}>
+                  {selectedBrokerType === 'simulated' ? '模拟账户' : '实盘默认'}
+                </Tag>
               </Form.Item>
             </Col>
           </Row>
 
           {selectedBrokerType !== 'simulated' && (
             <>
-              <Form.Item label="API网关地址" name="api_url">
-                <Input placeholder="券商提供的量化交易网关地址，如 https://.../api/v1" />
-              </Form.Item>
-
               <Row gutter={16}>
                 <Col span={12}>
                   <Form.Item label="资金账号" name="account_id" rules={[{ required: true, message: '请输入资金账号' }]}>
@@ -447,44 +437,71 @@ export default function TradePage() {
                 </Col>
               </Row>
 
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item label="通信方式" name="comm_type">
-                    <Select options={[
-                      { value: 'http', label: 'HTTP API' },
-                      { value: 'tcp', label: 'TCP 网关' },
-                      { value: 'dll', label: '本地 DLL/终端' },
-                    ]} />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item label="AppKey" name="app_key" rules={selectedBrokerType === 'csc' ? [{ required: true, message: '请输入AppKey' }] : []}>
-                    <Input autoComplete="off" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item label="AppSecret" name="app_secret" rules={selectedBrokerType === 'csc' ? [{ required: true, message: '请输入AppSecret' }] : []}>
-                <Input.Password autoComplete="new-password" />
-              </Form.Item>
-
-              {selectedIsDemo === false && (
-                <Form.Item
-                  name="confirm_live"
-                  valuePropName="checked"
-                  rules={[
-                    {
-                      validator: (_, value) => value
-                        ? Promise.resolve()
-                        : Promise.reject(new Error('请确认实盘交易风险')),
-                    },
-                  ]}
-                >
-                  <Checkbox>
-                    我确认该账户为真实资金账户，已开通中信建投量化/API交易权限，并允许系统将策略信号提交为真实委托
-                  </Checkbox>
-                </Form.Item>
-              )}
+              <Collapse
+                ghost
+                size="small"
+                items={[{
+                  key: 'advanced',
+                  label: '高级配置',
+                  children: (
+                    <>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="连接ID" name="id">
+                            <Input placeholder="如 csc_runtime" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="显示名称" name="name">
+                            <Input placeholder="如 中信建投证券" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Form.Item label="API网关地址" name="api_url">
+                        <Input placeholder="券商提供的量化交易网关地址" />
+                      </Form.Item>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="通信方式" name="comm_type">
+                            <Select options={[
+                              { value: 'http', label: 'HTTP API' },
+                              { value: 'tcp', label: 'TCP 网关' },
+                              { value: 'dll', label: '本地 DLL/终端' },
+                            ]} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="环境" name="is_demo" valuePropName="checked">
+                            <Checkbox
+                              onChange={(event) => {
+                                if (selectedBrokerType !== 'csc') return;
+                                const currentUrl = loginForm.getFieldValue('api_url');
+                                if (!currentUrl || currentUrl === CSC_LIVE_API_URL || currentUrl === CSC_DEMO_API_URL) {
+                                  loginForm.setFieldsValue({ api_url: defaultApiUrl('csc', event.target.checked) });
+                                }
+                              }}
+                            >
+                              使用仿真环境
+                            </Checkbox>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Row gutter={16}>
+                        <Col span={12}>
+                          <Form.Item label="AppKey（可选）" name="app_key">
+                            <Input autoComplete="off" />
+                          </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                          <Form.Item label="AppSecret（可选）" name="app_secret">
+                            <Input.Password autoComplete="new-password" />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </>
+                  ),
+                }]}
+              />
             </>
           )}
         </Form>

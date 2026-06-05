@@ -15,6 +15,7 @@ import {getSystemStatus} from '../services/api';
 import BrokerConnect from './BrokerConnect';
 
 const { Header, Sider, Content } = Layout;
+const APP_NAME = '清北协同学的A股量化交易系统';
 
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '系统总览' },
@@ -68,8 +69,8 @@ export default function MainLayout() {
         }}>
           <ApiOutlined style={{ fontSize: 24, color: '#1677ff' }} />
           {!collapsed && (
-            <span style={{ marginLeft: 8, fontSize: 16, fontWeight: 600, whiteSpace: 'nowrap' }}>
-              A股量化系统
+            <span style={{ marginLeft: 8, fontSize: 13, fontWeight: 600, lineHeight: 1.2, maxWidth: 140 }}>
+              {APP_NAME}
             </span>
           )}
         </div>
@@ -92,7 +93,7 @@ export default function MainLayout() {
           height: 64,
         }}>
           <span style={{ fontSize: 16, fontWeight: 500 }}>
-            A股量化交易系统
+            {APP_NAME}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <BrokerConnect compact onChanged={fetchStatus} />

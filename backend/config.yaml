@@ -1,4 +1,4 @@
-# A股量化交易系统配置
+# 清北协同学的A股量化交易系统配置
 
 server:
   host: "0.0.0.0"
@@ -80,4 +80,3 @@ strategy:
   commission_rate: 0.0003
   stamp_tax_rate: 0.001
   slippage: 0.001
-

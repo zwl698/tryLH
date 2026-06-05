@@ -24,7 +24,10 @@ api.interceptors.response.use(
 );
 
 // ====== 券商接口 ======
-export const brokerLogin = () => api.post('/api/v1/broker/login');
+export const getBrokerProviders = () => api.get('/api/v1/broker/providers');
+export const getBrokerStatus = () => api.get('/api/v1/broker/status');
+export const brokerSwitch = (data) => api.post('/api/v1/broker/switch', data);
+export const brokerLogin = (data = {}) => api.post('/api/v1/broker/login', data);
 export const brokerLogout = () => api.post('/api/v1/broker/logout');
 export const getAccount = () => api.get('/api/v1/broker/account');
 export const getPositions = () => api.get('/api/v1/broker/positions');

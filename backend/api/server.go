@@ -9,6 +9,7 @@ import (
 	"aqsystem/risk"
 	"aqsystem/strategy"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -40,7 +41,7 @@ func corsMiddleware() gin.HandlerFunc {
 type Server struct {
 	engine      *strategy.Engine
 	marketSvc   *market.MarketService
-	broker      broker.Broker
+	brokerMgr   *broker.BrokerManager
 	riskManager *risk.RiskManager
 	btEngine    *backtest.BacktestEngine
 	logger      *zap.Logger
@@ -50,7 +51,7 @@ type Server struct {
 func NewServer(
 	engine *strategy.Engine,
 	marketSvc *market.MarketService,
-	b broker.Broker,
+	brokerMgr *broker.BrokerManager,
 	riskMgr *risk.RiskManager,
 	logger *zap.Logger,
 ) *Server {
@@ -65,7 +66,7 @@ func NewServer(
 	return &Server{
 		engine:      engine,
 		marketSvc:   marketSvc,
-		broker:      b,
+		brokerMgr:   brokerMgr,
 		riskManager: riskMgr,
 		btEngine:    btEngine,
 		logger:      logger,
@@ -91,6 +92,9 @@ func (s *Server) SetupRouter() *gin.Engine {
 	v1 := r.Group("/api/v1")
 	{
 		// 券商相关
+		v1.GET("/broker/providers", s.getBrokerProviders)
+		v1.GET("/broker/status", s.getBrokerStatus)
+		v1.POST("/broker/switch", s.switchBroker)
 		v1.POST("/broker/login", s.brokerLogin)
 		v1.POST("/broker/logout", s.brokerLogout)
 		v1.GET("/broker/account", s.getAccount)
@@ -135,24 +139,57 @@ func (s *Server) SetupRouter() *gin.Engine {
 
 // ==================== 券商接口 ====================
 
+func (s *Server) getBrokerProviders(c *gin.Context) {
+	s.responseSuccess(c, broker.SupportedBrokerProviders())
+}
+
+func (s *Server) getBrokerStatus(c *gin.Context) {
+	s.responseSuccess(c, s.brokerMgr.Status())
+}
+
+func (s *Server) switchBroker(c *gin.Context) {
+	var req models.BrokerConfig
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.brokerMgr.Select(c.Request.Context(), req); err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.responseSuccess(c, s.brokerMgr.Status())
+}
+
 func (s *Server) brokerLogin(c *gin.Context) {
-	if err := s.broker.Login(c.Request.Context()); err != nil {
+	var req models.BrokerConfig
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && err != io.EOF {
+			s.responseError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
+	if err := s.brokerMgr.Login(c.Request.Context(), req); err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.responseSuccess(c, gin.H{"message": "登录成功"})
+	s.responseSuccess(c, gin.H{"message": "登录成功", "status": s.brokerMgr.Status()})
 }
 
 func (s *Server) brokerLogout(c *gin.Context) {
-	if err := s.broker.Logout(c.Request.Context()); err != nil {
+	if err := s.brokerMgr.Logout(c.Request.Context()); err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.responseSuccess(c, gin.H{"message": "登出成功"})
+	s.responseSuccess(c, gin.H{"message": "登出成功", "status": s.brokerMgr.Status()})
 }
 
 func (s *Server) getAccount(c *gin.Context) {
-	account, err := s.broker.GetAccount(c.Request.Context())
+	b, ok := s.currentBroker(c)
+	if !ok {
+		return
+	}
+	account, err := b.GetAccount(c.Request.Context())
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -161,7 +198,11 @@ func (s *Server) getAccount(c *gin.Context) {
 }
 
 func (s *Server) getPositions(c *gin.Context) {
-	positions, err := s.broker.GetPositions(c.Request.Context())
+	b, ok := s.currentBroker(c)
+	if !ok {
+		return
+	}
+	positions, err := b.GetPositions(c.Request.Context())
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -170,7 +211,11 @@ func (s *Server) getPositions(c *gin.Context) {
 }
 
 func (s *Server) getOrders(c *gin.Context) {
-	orders, err := s.broker.GetOrders(c.Request.Context())
+	b, ok := s.currentBroker(c)
+	if !ok {
+		return
+	}
+	orders, err := b.GetOrders(c.Request.Context())
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -181,6 +226,11 @@ func (s *Server) getOrders(c *gin.Context) {
 // ==================== 交易接口 ====================
 
 func (s *Server) submitOrder(c *gin.Context) {
+	b, ok := s.currentBroker(c)
+	if !ok {
+		return
+	}
+
 	var req struct {
 		StockCode  string `json:"stock_code" binding:"required"`
 		Side       string `json:"side" binding:"required"`
@@ -211,7 +261,7 @@ func (s *Server) submitOrder(c *gin.Context) {
 	}
 
 	// 风控检查
-	account, err := s.broker.GetAccount(c.Request.Context())
+	account, err := b.GetAccount(c.Request.Context())
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -222,7 +272,7 @@ func (s *Server) submitOrder(c *gin.Context) {
 		return
 	}
 
-	result, err := s.broker.SubmitOrder(c.Request.Context(), order)
+	result, err := b.SubmitOrder(c.Request.Context(), order)
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -233,8 +283,12 @@ func (s *Server) submitOrder(c *gin.Context) {
 }
 
 func (s *Server) cancelOrder(c *gin.Context) {
+	b, ok := s.currentBroker(c)
+	if !ok {
+		return
+	}
 	orderID := c.Param("id")
-	if err := s.broker.CancelOrder(c.Request.Context(), orderID); err != nil {
+	if err := b.CancelOrder(c.Request.Context(), orderID); err != nil {
 		s.responseError(c, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -626,11 +680,13 @@ func (s *Server) getRiskEvents(c *gin.Context) {
 // ==================== 系统状态 ====================
 
 func (s *Server) getSystemStatus(c *gin.Context) {
+	brokerStatus := s.brokerMgr.Status()
 	s.responseSuccess(c, gin.H{
-		"status":     "running",
-		"broker":     s.broker.IsLoggedIn(),
-		"strategies": len(s.engine.ListStrategies()),
-		"timestamp":  time.Now().Format(time.RFC3339),
+		"status":        "running",
+		"broker":        brokerStatus.LoggedIn,
+		"broker_status": brokerStatus,
+		"strategies":    len(s.engine.ListStrategies()),
+		"timestamp":     time.Now().Format(time.RFC3339),
 	})
 }
 
@@ -657,6 +713,15 @@ func (s *Server) responseError(c *gin.Context, status int, msg string) {
 		"message": msg,
 		"data":    nil,
 	})
+}
+
+func (s *Server) currentBroker(c *gin.Context) (broker.Broker, bool) {
+	b := s.brokerMgr.Current()
+	if b == nil {
+		s.responseError(c, http.StatusServiceUnavailable, "未选择券商")
+		return nil, false
+	}
+	return b, true
 }
 
 // generateMockKLines 生成模拟K线数据（用于回测演示）

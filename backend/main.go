@@ -21,7 +21,8 @@ import (
 
 func main() {
 	// 1. 加载配置
-	cfg, err := config.LoadConfig("config.yaml")
+	cfgPath := resolveConfigPath()
+	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		fmt.Printf("加载配置失败: %v\n", err)
 		fmt.Println("使用默认配置继续...")
@@ -39,10 +40,10 @@ func main() {
 	logger.Info("    A股量化交易系统 启动中...")
 	logger.Info("========================================")
 
-	// 3. 创建券商连接
-	b, err := broker.NewBroker(cfg.Broker, logger)
+	// 3. 创建券商运行时管理器
+	brokerMgr, err := broker.NewBrokerManager(cfg.Broker, logger)
 	if err != nil {
-		logger.Fatal("创建券商连接失败", zap.Error(err))
+		logger.Fatal("创建券商管理器失败", zap.Error(err))
 	}
 
 	// 4. 创建行情服务
@@ -58,7 +59,7 @@ func main() {
 	registerBuiltInStrategies(strategyEngine, logger)
 
 	// 8. 创建API服务器
-	server := api.NewServer(strategyEngine, marketSvc, b, riskMgr, logger)
+	server := api.NewServer(strategyEngine, marketSvc, brokerMgr, riskMgr, logger)
 
 	// 9. 启动系统
 	ctx, cancel := context.WithCancel(context.Background())
@@ -68,16 +69,20 @@ func main() {
 	go marketSvc.StartPolling(ctx, time.Duration(cfg.Market.RefreshInterval)*time.Second)
 
 	// 启动信号处理循环
-	go processSignals(ctx, strategyEngine, b, riskMgr, logger)
+	go processSignals(ctx, strategyEngine, brokerMgr, riskMgr, logger)
 
 	// 启动风控监控
-	go riskMonitor(ctx, b, riskMgr, logger)
+	go riskMonitor(ctx, brokerMgr, riskMgr, logger)
 
-	// 10. 自动登录券商
-	if err := b.Login(ctx); err != nil {
-		logger.Error("券商登录失败", zap.Error(err))
+	// 10. 自动登录模拟券商；真实券商需要在Web端显式登录确认。
+	if cfg.Broker.Type == "simulated" || cfg.Broker.Type == "" {
+		if err := brokerMgr.Login(ctx, models.BrokerConfig{}); err != nil {
+			logger.Error("模拟券商登录失败", zap.Error(err))
+		} else {
+			logger.Info("模拟券商登录成功")
+		}
 	} else {
-		logger.Info("券商登录成功")
+		logger.Info("实盘券商已配置，等待Web端运行时登录确认", zap.String("broker", cfg.Broker.Type))
 	}
 
 	// 11. 启动HTTP服务
@@ -110,9 +115,22 @@ func main() {
 	cancel()
 	strategyEngine.Stop()
 	marketSvc.Stop()
-	b.Logout(context.Background())
+	brokerMgr.Logout(context.Background())
 
 	logger.Info("系统已安全关闭")
+}
+
+func resolveConfigPath() string {
+	if path := os.Getenv("AQ_CONFIG"); path != "" {
+		return path
+	}
+	if _, err := os.Stat("config.yaml"); err == nil {
+		return "config.yaml"
+	}
+	if _, err := os.Stat("backend/config.yaml"); err == nil {
+		return "backend/config.yaml"
+	}
+	return "config.yaml"
 }
 
 // registerBuiltInStrategies 注册内置策略
@@ -234,7 +252,7 @@ func registerBuiltInStrategies(engine *strategy.Engine, logger *zap.Logger) {
 }
 
 // processSignals 处理交易信号
-func processSignals(ctx context.Context, engine *strategy.Engine, b broker.Broker, riskMgr *risk.RiskManager, logger *zap.Logger) {
+func processSignals(ctx context.Context, engine *strategy.Engine, brokerMgr *broker.BrokerManager, riskMgr *risk.RiskManager, logger *zap.Logger) {
 	logger.Info("信号处理循环已启动")
 
 	quoteChan := engine.SignalChannel()
@@ -248,6 +266,15 @@ func processSignals(ctx context.Context, engine *strategy.Engine, b broker.Broke
 			return
 
 		case signal := <-quoteChan:
+			b := brokerMgr.Current()
+			if b == nil || !b.IsLoggedIn() {
+				logger.Warn("策略信号未执行：当前未登录券商",
+					zap.String("stock", signal.StockCode),
+					zap.String("side", string(signal.Side)),
+				)
+				continue
+			}
+
 			// 将信号转换为订单
 			order := &models.Order{
 				StockCode:  signal.StockCode,
@@ -299,7 +326,7 @@ func processSignals(ctx context.Context, engine *strategy.Engine, b broker.Broke
 }
 
 // riskMonitor 风控监控
-func riskMonitor(ctx context.Context, b broker.Broker, riskMgr *risk.RiskManager, logger *zap.Logger) {
+func riskMonitor(ctx context.Context, brokerMgr *broker.BrokerManager, riskMgr *risk.RiskManager, logger *zap.Logger) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -308,6 +335,11 @@ func riskMonitor(ctx context.Context, b broker.Broker, riskMgr *risk.RiskManager
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			b := brokerMgr.Current()
+			if b == nil || !b.IsLoggedIn() {
+				continue
+			}
+
 			// 获取账户信息
 			account, err := b.GetAccount(ctx)
 			if err != nil {

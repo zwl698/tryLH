@@ -1,8 +1,10 @@
 import React, {useEffect, useState} from 'react';
 import {
+    Alert,
     Badge,
     Button,
     Card,
+    Checkbox,
     Col,
     Form,
     Input,
@@ -22,31 +24,65 @@ import {
     brokerLogout,
     cancelOrder,
     getAccount,
+    getBrokerProviders,
+    getBrokerStatus,
     getOrders,
     getPositions,
     submitOrder
 } from '../services/api';
 import {formatMoney, sideColor, sideLabel} from '../utils/format';
 
+const DEFAULT_BROKER_PROVIDERS = [
+  { type: 'simulated', name: '模拟券商', supports_live: false },
+  { type: 'csc', name: '中信建投证券', supports_live: true },
+  { type: 'xtquant', name: 'QMT / 迅投', supports_live: true },
+  { type: 'cj', name: '长江证券', supports_live: true },
+];
+
+function providerName(providers, type) {
+  return (providers.find(p => p.type === type) || {}).name || type || '未选择';
+}
+
 export default function TradePage() {
+  const [messageApi, contextHolder] = message.useMessage();
   const [account, setAccount] = useState(null);
   const [positions, setPositions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [orderModal, setOrderModal] = useState(false);
+  const [loginModal, setLoginModal] = useState(false);
+  const [brokerProviders, setBrokerProviders] = useState(DEFAULT_BROKER_PROVIDERS);
+  const [brokerStatus, setBrokerStatus] = useState(null);
   const [orderForm] = Form.useForm();
+  const [loginForm] = Form.useForm();
   const [loggedIn, setLoggedIn] = useState(false);
+  const selectedBrokerType = Form.useWatch('type', loginForm) || 'csc';
+  const selectedIsDemo = Form.useWatch('is_demo', loginForm);
 
   useEffect(() => {
+    fetchBrokerProviders();
     fetchData();
   }, []);
+
+  const fetchBrokerProviders = async () => {
+    try {
+      const data = await getBrokerProviders();
+      if (Array.isArray(data) && data.length > 0) {
+        setBrokerProviders(data);
+      }
+    } catch {}
+  };
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [accData, posData, ordData] = await Promise.allSettled([
-        getAccount(), getPositions(), getOrders(),
+      const [statusData, accData, posData, ordData] = await Promise.allSettled([
+        getBrokerStatus(), getAccount(), getPositions(), getOrders(),
       ]);
+      if (statusData.status === 'fulfilled') {
+        setBrokerStatus(statusData.value);
+        setLoggedIn(!!statusData.value?.logged_in);
+      }
       if (accData.status === 'fulfilled') { setAccount(accData.value); setLoggedIn(true); }
       if (posData.status === 'fulfilled') setPositions(posData.value || []);
       if (ordData.status === 'fulfilled') setOrders(ordData.value || []);
@@ -54,24 +90,68 @@ export default function TradePage() {
     setLoading(false);
   };
 
+  const openLoginModal = () => {
+    const current = brokerStatus?.current || {};
+    const type = current.type && current.type !== 'simulated' ? current.type : 'csc';
+    const isSameType = current.type === type;
+    loginForm.setFieldsValue({
+      type,
+      id: isSameType && current.id ? current.id : `${type}_runtime`,
+      name: isSameType && current.name ? current.name : providerName(brokerProviders, type),
+      api_url: isSameType ? current.api_url || '' : '',
+      account_id: isSameType ? current.account_id || '' : '',
+      is_demo: isSameType ? current.is_demo !== false : true,
+      comm_type: isSameType ? current.comm_type || 'http' : 'http',
+      app_key: isSameType ? current.app_key || '' : '',
+      confirm_live: false,
+    });
+    setLoginModal(true);
+  };
+
   const handleLogin = async () => {
     try {
-      await brokerLogin();
-      message.success('券商登录成功');
+      const values = await loginForm.validateFields();
+      const provider = brokerProviders.find(p => p.type === values.type);
+      const isRealBroker = values.type !== 'simulated';
+      const isLiveTrading = isRealBroker && values.is_demo === false;
+      if (isLiveTrading && !values.confirm_live) {
+        messageApi.error('实盘登录前必须确认已开通权限并理解真实资金风险');
+        return;
+      }
+
+      const payload = {
+        id: values.id || `${values.type}_runtime`,
+        name: values.name || provider?.name || values.type,
+        type: values.type,
+        api_url: values.api_url || '',
+        account_id: values.account_id || '',
+        password: values.password || '',
+        is_demo: values.is_demo !== false,
+        comm_type: values.comm_type || 'http',
+        app_key: values.app_key || '',
+        app_secret: values.app_secret || '',
+      };
+
+      const data = await brokerLogin(payload);
+      setBrokerStatus(data?.status || null);
+      messageApi.success(`${provider?.name || '券商'}登录成功`);
+      setLoginModal(false);
+      loginForm.resetFields(['password', 'app_secret', 'confirm_live']);
       setLoggedIn(true);
       fetchData();
     } catch (e) {
-      message.error('登录失败: ' + (e.message || ''));
+      if (e.message) messageApi.error('登录失败: ' + e.message);
     }
   };
 
   const handleLogout = async () => {
     try {
-      await brokerLogout();
-      message.success('券商已登出');
+      const data = await brokerLogout();
+      setBrokerStatus(data?.status || null);
+      messageApi.success('券商已登出');
       setLoggedIn(false);
     } catch (e) {
-      message.error('登出失败: ' + (e.message || ''));
+      messageApi.error('登出失败: ' + (e.message || ''));
     }
   };
 
@@ -86,22 +166,22 @@ export default function TradePage() {
         volume: values.volume,
         strategy_id: values.strategy_id || '',
       });
-      message.success('下单成功');
+      messageApi.success('下单成功');
       setOrderModal(false);
       orderForm.resetFields();
       fetchData();
     } catch (e) {
-      if (e.message) message.error('下单失败: ' + e.message);
+      if (e.message) messageApi.error('下单失败: ' + e.message);
     }
   };
 
   const handleCancelOrder = async (id) => {
     try {
       await cancelOrder(id);
-      message.success('撤单成功');
+      messageApi.success('撤单成功');
       fetchData();
     } catch (e) {
-      message.error('撤单失败: ' + (e.message || ''));
+      messageApi.error('撤单失败: ' + (e.message || ''));
     }
   };
 
@@ -169,8 +249,14 @@ export default function TradePage() {
     },
   ];
 
+  const currentBroker = brokerStatus?.current || {};
+  const currentBrokerType = currentBroker.type || 'simulated';
+  const currentBrokerName = currentBroker.name || account?.broker_name || providerName(brokerProviders, currentBrokerType);
+  const isLiveTrading = !!brokerStatus?.live_trading;
+
   return (
     <div>
+      {contextHolder}
       {/* 券商连接状态 */}
       <Card size="small" style={{ marginBottom: 16 }}>
         <Row align="middle" justify="space-between">
@@ -178,17 +264,18 @@ export default function TradePage() {
             <Space>
               <Badge status={loggedIn ? 'success' : 'error'} />
               <span style={{ fontWeight: 500 }}>{loggedIn ? '券商已连接' : '券商未连接'}</span>
-              {account && (
-                <span style={{ color: '#8c8c8c' }}>
-                  ({account.broker_name || account.broker_id})
-                </span>
-              )}
+              <Tag color={isLiveTrading ? 'red' : currentBrokerType === 'simulated' ? 'default' : 'blue'}>
+                {isLiveTrading ? '实盘' : currentBroker?.is_demo === false ? '实盘未登录' : '仿真/模拟'}
+              </Tag>
+              <span style={{ color: '#8c8c8c' }}>
+                {currentBrokerName} {currentBroker.account_id ? `(${currentBroker.account_id})` : ''}
+              </span>
             </Space>
           </Col>
           <Col>
             <Space>
               {!loggedIn ? (
-                <Button type="primary" icon={<LoginOutlined />} onClick={handleLogin}>连接券商</Button>
+                <Button type="primary" icon={<LoginOutlined />} onClick={openLoginModal}>连接券商</Button>
               ) : (
                 <Button icon={<LogoutOutlined />} onClick={handleLogout}>断开连接</Button>
               )}
@@ -267,6 +354,142 @@ export default function TradePage() {
         />
       </Card>
 
+      {/* 券商登录弹窗 */}
+      <Modal
+        title="连接券商"
+        open={loginModal}
+        onOk={handleLogin}
+        onCancel={() => { setLoginModal(false); loginForm.resetFields(['password', 'app_secret', 'confirm_live']); }}
+        okText="登录"
+        cancelText="取消"
+        width={620}
+      >
+        <Alert
+          type={selectedBrokerType === 'simulated' ? 'info' : 'warning'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={selectedBrokerType === 'csc' ? '中信建投实盘接入' : '券商连接'}
+          description={selectedBrokerType === 'csc'
+            ? '需要已在中信建投开通量化/API交易权限，并填写券商提供的交易网关、资金账号、交易密码、AppKey 和 AppSecret。凭据只在本次运行内存中使用，不会保存到前端。'
+            : selectedBrokerType === 'simulated'
+              ? '模拟券商不连接真实资金账户，适合联调策略和手动下单流程。'
+              : '请确认已取得对应券商的API/SDK授权和交易权限。'}
+        />
+
+        <Form
+          form={loginForm}
+          layout="vertical"
+          initialValues={{
+            type: 'csc',
+            id: 'csc_runtime',
+            name: '中信建投证券',
+            is_demo: true,
+            comm_type: 'http',
+            confirm_live: false,
+          }}
+        >
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="券商" name="type" rules={[{ required: true, message: '请选择券商' }]}>
+                <Select
+                  options={brokerProviders.map(provider => ({
+                    value: provider.type,
+                    label: provider.supports_live ? `${provider.name}（可实盘）` : provider.name,
+                  }))}
+                  onChange={(type) => {
+                    const provider = brokerProviders.find(p => p.type === type);
+                    loginForm.setFieldsValue({
+                      id: `${type}_runtime`,
+                      name: provider?.name || type,
+                      is_demo: type === 'simulated' ? true : loginForm.getFieldValue('is_demo') !== false,
+                      confirm_live: false,
+                    });
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="环境" name="is_demo" valuePropName="checked">
+                <Checkbox disabled={selectedBrokerType === 'simulated'}>仿真/模拟环境</Checkbox>
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="连接ID" name="id">
+                <Input placeholder="如 csc_runtime" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="显示名称" name="name">
+                <Input placeholder="如 中信建投证券" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          {selectedBrokerType !== 'simulated' && (
+            <>
+              <Form.Item label="API网关地址" name="api_url">
+                <Input placeholder="券商提供的量化交易网关地址，如 https://.../api/v1" />
+              </Form.Item>
+
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="资金账号" name="account_id" rules={[{ required: true, message: '请输入资金账号' }]}>
+                    <Input autoComplete="off" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="交易密码" name="password" rules={[{ required: true, message: '请输入交易密码' }]}>
+                    <Input.Password autoComplete="new-password" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="通信方式" name="comm_type">
+                    <Select options={[
+                      { value: 'http', label: 'HTTP API' },
+                      { value: 'tcp', label: 'TCP 网关' },
+                      { value: 'dll', label: '本地 DLL/终端' },
+                    ]} />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="AppKey" name="app_key" rules={selectedBrokerType === 'csc' ? [{ required: true, message: '请输入AppKey' }] : []}>
+                    <Input autoComplete="off" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item label="AppSecret" name="app_secret" rules={selectedBrokerType === 'csc' ? [{ required: true, message: '请输入AppSecret' }] : []}>
+                <Input.Password autoComplete="new-password" />
+              </Form.Item>
+
+              {selectedIsDemo === false && (
+                <Form.Item
+                  name="confirm_live"
+                  valuePropName="checked"
+                  rules={[
+                    {
+                      validator: (_, value) => value
+                        ? Promise.resolve()
+                        : Promise.reject(new Error('请确认实盘交易风险')),
+                    },
+                  ]}
+                >
+                  <Checkbox>
+                    我确认该账户为真实资金账户，已开通中信建投量化/API交易权限，并允许系统将策略信号提交为真实委托
+                  </Checkbox>
+                </Form.Item>
+              )}
+            </>
+          )}
+        </Form>
+      </Modal>
+
       {/* 下单弹窗 */}
       <Modal
         title="手动下单"
@@ -318,4 +541,3 @@ export default function TradePage() {
     </div>
   );
 }
-

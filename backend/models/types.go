@@ -276,17 +276,17 @@ type RiskConfig struct {
 
 // BrokerConfig 券商配置
 type BrokerConfig struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Type      string            `json:"type"` // simulated, xtquant, csc, cj, etc.
-	APIURL    string            `json:"api_url"`
-	AccountID string            `json:"account_id"`
-	Password  string            `json:"password"`
-	CaPath    string            `json:"ca_path"`
-	CertPath  string            `json:"cert_path"`
-	IsDemo    bool              `json:"is_demo"`
-	CommType  string            `json:"comm_type"`  // 通信方式: http, tcp, dll
-	AppKey    string            `json:"app_key"`    // 券商应用Key
-	AppSecret string            `json:"app_secret"` // 券商应用Secret
-	ExtConfig map[string]string `json:"ext_config"` // 扩展配置
+	ID        string            `json:"id" yaml:"id"`
+	Name      string            `json:"name" yaml:"name"`
+	Type      string            `json:"type" yaml:"type"` // simulated, xtquant, csc, cj, etc.
+	APIURL    string            `json:"api_url" yaml:"api_url"`
+	AccountID string            `json:"account_id" yaml:"account_id"`
+	Password  string            `json:"password" yaml:"password"`
+	CaPath    string            `json:"ca_path" yaml:"ca_path"`
+	CertPath  string            `json:"cert_path" yaml:"cert_path"`
+	IsDemo    bool              `json:"is_demo" yaml:"is_demo"`
+	CommType  string            `json:"comm_type" yaml:"comm_type"`   // 通信方式: http, tcp, dll
+	AppKey    string            `json:"app_key" yaml:"app_key"`       // 券商应用Key
+	AppSecret string            `json:"app_secret" yaml:"app_secret"` // 券商应用Secret
+	ExtConfig map[string]string `json:"ext_config" yaml:"ext_config"` // 扩展配置
 }

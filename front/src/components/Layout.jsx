@@ -11,6 +11,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons';
 import {getSystemStatus} from '../services/api';
+import BrokerConnect from './BrokerConnect';
 
 const { Header, Sider, Content } = Layout;
 
@@ -18,7 +19,7 @@ const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '系统总览' },
   { key: '/market', icon: <LineChartOutlined />, label: '行情中心' },
   { key: '/strategy', icon: <RobotOutlined />, label: '策略管理' },
-  { key: '/trade', icon: <SwapOutlined />, label: '交易管理' },
+  { key: '/trade', icon: <SwapOutlined />, label: '券商/交易' },
   { key: '/backtest', icon: <FundOutlined />, label: '策略回测' },
   { key: '/risk', icon: <SafetyCertificateOutlined />, label: '风控管理' },
 ];
@@ -92,12 +93,9 @@ export default function MainLayout() {
             A股量化交易系统
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <BrokerConnect compact onChanged={fetchStatus} />
             {systemStatus && (
               <>
-                <Badge
-                  status={systemStatus.broker ? 'success' : 'error'}
-                  text={systemStatus.broker ? '券商已连接' : '券商未连接'}
-                />
                 <Badge
                   status="processing"
                   text={`${systemStatus.strategies || 0} 个策略`}
@@ -121,4 +119,3 @@ export default function MainLayout() {
     </Layout>
   );
 }
-

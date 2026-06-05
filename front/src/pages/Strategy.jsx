@@ -1,5 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {
+    Alert,
     Button,
     Card,
     Col,
@@ -24,6 +25,7 @@ import {
     StopOutlined
 } from '@ant-design/icons';
 import {
+    getBrokerStatus,
     getStrategy,
     getStrategyParamDefs,
     getStrategyTemplates,
@@ -34,6 +36,7 @@ import {
     updateStrategyParams
 } from '../services/api';
 import {strategyStatusColor, strategyStatusLabel} from '../utils/format';
+import BrokerConnect from '../components/BrokerConnect';
 
 const STRATEGY_TYPE_INFO = {
   double_ma: { name: '双均线交叉', color: '#1677ff', icon: '📈' },
@@ -51,11 +54,13 @@ export default function StrategyPage() {
   const [paramsModal, setParamsModal] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
   const [paramDefs, setParamDefs] = useState([]);
+  const [brokerStatus, setBrokerStatus] = useState(null);
   const [paramsForm] = Form.useForm();
 
   useEffect(() => {
     fetchStrategies();
     fetchTemplates();
+    fetchBrokerStatus();
   }, []);
 
   const fetchStrategies = async () => {
@@ -72,6 +77,15 @@ export default function StrategyPage() {
       const data = await getStrategyTemplates();
       setTemplates(data || []);
     } catch {}
+  };
+
+  const fetchBrokerStatus = async () => {
+    try {
+      const data = await getBrokerStatus();
+      setBrokerStatus(data);
+    } catch {
+      setBrokerStatus(null);
+    }
   };
 
   const handleStart = async (id) => {
@@ -193,9 +207,31 @@ export default function StrategyPage() {
     },
   ];
 
+  const currentBroker = brokerStatus?.current || {};
+  const currentBrokerType = currentBroker.type || 'simulated';
+  const currentBrokerName = currentBroker.name || '模拟券商';
+  const brokerAlertType = brokerStatus?.live_trading ? 'error' : currentBrokerType === 'simulated' ? 'warning' : 'info';
+  const brokerMessage = brokerStatus?.live_trading
+    ? `策略实时交易目标：${currentBrokerName} 实盘账户`
+    : currentBrokerType === 'simulated'
+      ? '当前策略实时交易目标：模拟券商'
+      : `当前策略实时交易目标：${currentBrokerName} 仿真/未实盘`;
+  const brokerDescription = brokerStatus?.live_trading
+    ? '启动策略后，策略信号会经过风控检查并提交到当前真实券商连接。'
+    : '启动策略前请先在顶部或此处切换/登录真实券商，否则策略信号只会走当前模拟或仿真连接。';
+
   return (
     <Spin spinning={loading}>
       <div>
+        <Alert
+          showIcon
+          type={brokerAlertType}
+          message={brokerMessage}
+          description={brokerDescription}
+          action={<BrokerConnect compact onChanged={setBrokerStatus} />}
+          style={{ marginBottom: 16 }}
+        />
+
         {/* 策略模板卡片 */}
         <Row gutter={[16, 16]}>
           {templates.map((t, i) => {
@@ -301,4 +337,3 @@ export default function StrategyPage() {
     </Spin>
   );
 }
-

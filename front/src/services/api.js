@@ -57,6 +57,13 @@ export const updateStrategyParams = (id, params) => api.put(`/api/v1/strategy/${
 export const getStrategyParamDefs = (id) => api.get(`/api/v1/strategy/${id}/params-defs`);
 export const getStrategyTemplates = () => api.get('/api/v1/strategy-templates');
 
+// ====== 智能选股/智能交易接口 ======
+export const getStockSelectionPlans = () => api.get('/api/v1/stock-selector/plans');
+export const getStockUniverse = () => api.get('/api/v1/stock-selector/universe');
+export const runStockSelection = (data) => api.post('/api/v1/stock-selector/run', data);
+export const runSmartTrade = (data) => api.post('/api/v1/smart-trade/run', data);
+export const applySmartTrade = (data) => api.post('/api/v1/smart-trade/apply', data);
+
 // ====== 回测接口 ======
 export const runBacktest = (data) => api.post('/api/v1/backtest', data);
 

@@ -71,6 +71,9 @@ func main() {
 	// 启动信号处理循环
 	go processSignals(ctx, strategyEngine, brokerMgr, riskMgr, logger)
 
+	// 启动行情到策略的实时分发
+	go processMarketQuotes(ctx, marketSvc, strategyEngine, logger)
+
 	// 启动风控监控
 	go riskMonitor(ctx, brokerMgr, riskMgr, logger)
 
@@ -321,6 +324,25 @@ func processSignals(ctx context.Context, engine *strategy.Engine, brokerMgr *bro
 				zap.Int64("volume", signal.Volume),
 				zap.String("reason", signal.Reason),
 			)
+		}
+	}
+}
+
+// processMarketQuotes 将行情轮询结果分发给运行中的策略。
+func processMarketQuotes(ctx context.Context, marketSvc *market.MarketService, engine *strategy.Engine, logger *zap.Logger) {
+	logger.Info("实时行情策略分发已启动")
+	quoteChan := marketSvc.QuoteChannel()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("实时行情策略分发已停止")
+			return
+		case quote := <-quoteChan:
+			signals := engine.ProcessQuote(ctx, quote)
+			for _, sig := range signals {
+				engine.PushSignal(sig)
+			}
 		}
 	}
 }

@@ -778,6 +778,9 @@ func NewGridStrategy(config models.StrategyConfig, logger *zap.Logger) *GridStra
 	s.lowerPrice = s.getFloatParam("lower_price", 0)
 	s.gridCount = s.getIntParam("grid_count", 10)
 	s.gridVolume = int64(s.getIntParam("grid_volume", 100))
+	for _, code := range config.Stocks {
+		s.initGrid(code)
+	}
 	return s
 }
 

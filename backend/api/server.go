@@ -7,7 +7,9 @@ import (
 	"aqsystem/market"
 	"aqsystem/models"
 	"aqsystem/risk"
+	"aqsystem/selector"
 	"aqsystem/strategy"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,6 +123,13 @@ func (s *Server) SetupRouter() *gin.Engine {
 		v1.PUT("/strategy/:id/params", s.updateStrategyParams)
 		v1.GET("/strategy/:id/params-defs", s.getStrategyParamDefs)
 		v1.GET("/strategy-templates", s.getStrategyTemplates)
+
+		// 智能选股/智能交易
+		v1.GET("/stock-selector/plans", s.getStockSelectionPlans)
+		v1.GET("/stock-selector/universe", s.getStockUniverse)
+		v1.POST("/stock-selector/run", s.runStockSelection)
+		v1.POST("/smart-trade/run", s.runSmartTrade)
+		v1.POST("/smart-trade/apply", s.applySmartTrade)
 
 		// 回测
 		v1.POST("/backtest", s.runBacktest)
@@ -519,6 +528,208 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 	s.responseSuccess(c, templates)
 }
 
+// ==================== 智能选股/智能交易接口 ====================
+
+type smartTradeRequest struct {
+	StrategyType   string                 `json:"strategy_type" binding:"required"`
+	PlanID         string                 `json:"plan_id"`
+	Universe       string                 `json:"universe"`
+	CandidateCodes []string               `json:"candidate_codes"`
+	TopN           int                    `json:"top_n"`
+	LookbackDays   int                    `json:"lookback_days"`
+	Params         map[string]interface{} `json:"params"`
+	StartDate      string                 `json:"start_date"`
+	EndDate        string                 `json:"end_date"`
+	InitCapital    float64                `json:"init_capital"`
+}
+
+type smartTradeApplyRequest struct {
+	StrategyType string                 `json:"strategy_type" binding:"required"`
+	Stocks       []string               `json:"stocks" binding:"required"`
+	Params       map[string]interface{} `json:"params"`
+	Mode         string                 `json:"mode"`
+	InitCapital  float64                `json:"init_capital"`
+	AutoStart    bool                   `json:"auto_start"`
+}
+
+func (s *Server) getStockSelectionPlans(c *gin.Context) {
+	s.responseSuccess(c, selector.BuiltInPlans())
+}
+
+func (s *Server) getStockUniverse(c *gin.Context) {
+	s.responseSuccess(c, selector.DefaultUniverse())
+}
+
+func (s *Server) runStockSelection(c *gin.Context) {
+	var req selector.SelectionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := selector.NewEngine(s.marketSvc).Select(c.Request.Context(), req)
+	if err != nil {
+		s.responseError(c, http.StatusBadGateway, err.Error())
+		return
+	}
+	s.responseSuccess(c, result)
+}
+
+func (s *Server) runSmartTrade(c *gin.Context) {
+	var req smartTradeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	selection, err := selector.NewEngine(s.marketSvc).Select(c.Request.Context(), selector.SelectionRequest{
+		StrategyType:   req.StrategyType,
+		PlanID:         req.PlanID,
+		Universe:       req.Universe,
+		CandidateCodes: req.CandidateCodes,
+		TopN:           req.TopN,
+		LookbackDays:   req.LookbackDays,
+	})
+	if err != nil {
+		s.responseError(c, http.StatusBadGateway, "智能选股失败: "+err.Error())
+		return
+	}
+	if len(selection.Picks) == 0 {
+		s.responseError(c, http.StatusBadGateway, "智能选股未选出可交易股票")
+		return
+	}
+
+	stocks := make([]string, 0, len(selection.Picks))
+	for _, pick := range selection.Picks {
+		stocks = append(stocks, pick.StockCode)
+	}
+
+	params := selector.RecommendedParams(req.StrategyType, selection.Picks)
+	for k, v := range req.Params {
+		params[k] = v
+	}
+
+	startDate, endDate, err := parseSmartDateRange(req.StartDate, req.EndDate, time.Now())
+	if err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := s.runBacktestInternal(c.Request.Context(), req.StrategyType, stocks, params, startDate, endDate, req.InitCapital)
+	if err != nil {
+		s.responseError(c, http.StatusInternalServerError, "智能回测失败: "+err.Error())
+		return
+	}
+
+	s.responseSuccess(c, gin.H{
+		"workflow": []gin.H{
+			{"step": "select", "status": "done", "text": fmt.Sprintf("自动选出%d只股票", len(stocks))},
+			{"step": "params", "status": "done", "text": "已按策略生成默认参数"},
+			{"step": "backtest", "status": "done", "text": "已完成真实K线回测"},
+			{"step": "apply", "status": "ready", "text": "可一键应用到模拟交易或当前实盘连接"},
+		},
+		"selection":          selection,
+		"stocks":             stocks,
+		"recommended_params": params,
+		"backtest":           result,
+		"start_date":         startDate.Format("2006-01-02"),
+		"end_date":           endDate.Format("2006-01-02"),
+	})
+}
+
+func (s *Server) applySmartTrade(c *gin.Context) {
+	var req smartTradeApplyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	stocks, err := normalizeBacktestStocks(req.Stocks)
+	if err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "paper"
+	}
+	if mode == "paper" {
+		if err := s.brokerMgr.Login(c.Request.Context(), models.BrokerConfig{
+			ID:        "sim_broker_01",
+			Name:      "模拟券商",
+			Type:      "simulated",
+			AccountID: "SIM_ACCOUNT_001",
+			IsDemo:    true,
+			CommType:  "http",
+		}); err != nil {
+			s.responseError(c, http.StatusInternalServerError, "切换模拟券商失败: "+err.Error())
+			return
+		}
+	} else if mode == "live" && !s.brokerMgr.Status().LiveTrading {
+		s.responseError(c, http.StatusBadRequest, "实盘模式需要先登录真实券商")
+		return
+	}
+
+	params := selector.RecommendedParams(req.StrategyType, nil)
+	for k, v := range req.Params {
+		params[k] = v
+	}
+
+	initCapital := decimal.NewFromFloat(1000000)
+	if req.InitCapital > 0 {
+		initCapital = decimal.NewFromFloat(req.InitCapital)
+	}
+
+	config := models.StrategyConfig{
+		ID:          "smart_" + req.StrategyType,
+		Name:        "智能一键-" + strategyDisplayName(req.StrategyType),
+		Type:        req.StrategyType,
+		Description: "由智能交易模块自动选股、回测并应用的策略实例。",
+		Stocks:      stocks,
+		Params:      params,
+		Status:      models.StrategyStatusPaused,
+		MaxPosition: initCapital.Div(decimal.NewFromInt(int64(len(stocks)))),
+		StopLoss:    decimal.NewFromFloat(0.08),
+		TakeProfit:  decimal.NewFromFloat(0.2),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	strat, err := newStrategyFromConfig(config, s.logger)
+	if err != nil {
+		s.responseError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	_ = s.engine.UnregisterStrategy(config.ID)
+	if err := s.engine.RegisterStrategy(strat); err != nil {
+		s.responseError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.marketSvc.Subscribe(c.Request.Context(), stocks); err != nil {
+		s.responseError(c, http.StatusInternalServerError, "订阅行情失败: "+err.Error())
+		return
+	}
+	if req.AutoStart {
+		if err := s.engine.StartStrategy(config.ID); err != nil {
+			s.responseError(c, http.StatusInternalServerError, "启动智能策略失败: "+err.Error())
+			return
+		}
+	}
+
+	s.responseSuccess(c, gin.H{
+		"message":       "智能策略已应用",
+		"strategy_id":   config.ID,
+		"strategy_name": config.Name,
+		"stocks":        stocks,
+		"params":        params,
+		"status":        strat.GetStatus(),
+		"mode":          mode,
+		"broker_status": s.brokerMgr.Status(),
+	})
+}
+
 // ==================== 回测接口 ====================
 
 func (s *Server) runBacktest(c *gin.Context) {
@@ -558,65 +769,113 @@ func (s *Server) runBacktest(c *gin.Context) {
 		return
 	}
 
-	initCapital := decimal.NewFromFloat(1000000)
-	if req.InitCapital > 0 {
-		initCapital = decimal.NewFromFloat(req.InitCapital)
-	}
-
-	// 创建策略
-	stratConfig := models.StrategyConfig{
-		ID:          "backtest_" + req.StrategyType,
-		Name:        req.StrategyType,
-		Type:        req.StrategyType,
-		Stocks:      stockCodes,
-		Params:      req.Params,
-		Status:      models.StrategyStatusPaused,
-		MaxPosition: initCapital.Div(decimal.NewFromInt(int64(len(stockCodes)))),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	var strat strategy.Strategy
-	switch req.StrategyType {
-	case "double_ma":
-		strat = strategy.NewDoubleMAStrategy(stratConfig, s.logger)
-	case "turtle":
-		strat = strategy.NewTurtleStrategy(stratConfig, s.logger)
-	case "momentum":
-		strat = strategy.NewMomentumStrategy(stratConfig, s.logger)
-	case "mean_reversion":
-		strat = strategy.NewMeanReversionStrategy(stratConfig, s.logger)
-	case "grid":
-		strat = strategy.NewGridStrategy(stratConfig, s.logger)
-	default:
-		s.responseError(c, http.StatusBadRequest, "不支持的策略类型: "+req.StrategyType)
-		return
-	}
-
-	// 获取K线数据
-	klines := make(map[string][]models.KLine)
-	klineCount := estimateBacktestKLineCount(startDate, endDate)
-	for _, code := range stockCodes {
-		klineData, err := s.marketSvc.GetKLines(c.Request.Context(), code, "day", klineCount)
-		if err != nil {
-			s.responseError(c, http.StatusBadGateway, "获取真实K线数据失败: "+code+" "+err.Error())
-			return
-		}
-		if len(klineData) == 0 {
-			s.responseError(c, http.StatusBadGateway, "获取真实K线数据失败: "+code+" K线数据为空")
-			return
-		}
-		klines[code] = klineData
-	}
-
-	// 执行回测
-	result, err := s.btEngine.Run(c.Request.Context(), strat, klines, startDate, endDate, initCapital)
+	result, err := s.runBacktestInternal(c.Request.Context(), req.StrategyType, stockCodes, req.Params, startDate, endDate, req.InitCapital)
 	if err != nil {
 		s.responseError(c, http.StatusInternalServerError, "回测失败: "+err.Error())
 		return
 	}
 
 	s.responseSuccess(c, result)
+}
+
+func (s *Server) runBacktestInternal(ctx context.Context, strategyType string, stockCodes []string, params map[string]interface{}, startDate, endDate time.Time, initialCapital float64) (*models.BacktestResult, error) {
+	initCapital := decimal.NewFromFloat(1000000)
+	if initialCapital > 0 {
+		initCapital = decimal.NewFromFloat(initialCapital)
+	}
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+
+	stratConfig := models.StrategyConfig{
+		ID:          "backtest_" + strategyType,
+		Name:        strategyType,
+		Type:        strategyType,
+		Stocks:      stockCodes,
+		Params:      params,
+		Status:      models.StrategyStatusPaused,
+		MaxPosition: initCapital.Div(decimal.NewFromInt(int64(len(stockCodes)))),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	strat, err := newStrategyFromConfig(stratConfig, s.logger)
+	if err != nil {
+		return nil, err
+	}
+
+	klines := make(map[string][]models.KLine)
+	klineCount := estimateBacktestKLineCount(startDate, endDate)
+	for _, code := range stockCodes {
+		klineData, err := s.marketSvc.GetKLines(ctx, code, "day", klineCount)
+		if err != nil {
+			return nil, fmt.Errorf("获取真实K线数据失败: %s %w", code, err)
+		}
+		if len(klineData) == 0 {
+			return nil, fmt.Errorf("获取真实K线数据失败: %s K线数据为空", code)
+		}
+		klines[code] = klineData
+	}
+
+	return s.btEngine.Run(ctx, strat, klines, startDate, endDate, initCapital)
+}
+
+func newStrategyFromConfig(stratConfig models.StrategyConfig, logger *zap.Logger) (strategy.Strategy, error) {
+	switch stratConfig.Type {
+	case "double_ma":
+		return strategy.NewDoubleMAStrategy(stratConfig, logger), nil
+	case "turtle":
+		return strategy.NewTurtleStrategy(stratConfig, logger), nil
+	case "momentum":
+		return strategy.NewMomentumStrategy(stratConfig, logger), nil
+	case "mean_reversion":
+		return strategy.NewMeanReversionStrategy(stratConfig, logger), nil
+	case "grid":
+		return strategy.NewGridStrategy(stratConfig, logger), nil
+	default:
+		return nil, fmt.Errorf("不支持的策略类型: %s", stratConfig.Type)
+	}
+}
+
+func parseSmartDateRange(start, end string, now time.Time) (time.Time, time.Time, error) {
+	endDate := now
+	if strings.TrimSpace(end) != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", end, time.Local)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("结束日期格式错误")
+		}
+		endDate = parsed
+	}
+
+	startDate := endDate.AddDate(0, -3, 0)
+	if strings.TrimSpace(start) != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", start, time.Local)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("开始日期格式错误")
+		}
+		startDate = parsed
+	}
+	if endDate.Before(startDate) {
+		return time.Time{}, time.Time{}, fmt.Errorf("结束日期不能早于开始日期")
+	}
+	return startDate, endDate, nil
+}
+
+func strategyDisplayName(strategyType string) string {
+	switch strategyType {
+	case "double_ma":
+		return "双均线交叉策略"
+	case "turtle":
+		return "海龟交易策略"
+	case "momentum":
+		return "动量策略"
+	case "mean_reversion":
+		return "均值回归策略"
+	case "grid":
+		return "网格交易策略"
+	default:
+		return strategyType
+	}
 }
 
 func normalizeBacktestStocks(stocks []string) ([]string, error) {

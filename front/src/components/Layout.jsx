@@ -9,6 +9,7 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   SwapOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import {getSystemStatus} from '../services/api';
 import BrokerConnect from './BrokerConnect';
@@ -18,6 +19,7 @@ const { Header, Sider, Content } = Layout;
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '系统总览' },
   { key: '/market', icon: <LineChartOutlined />, label: '行情中心' },
+  { key: '/smart-trade', icon: <ThunderboltOutlined />, label: '智能交易' },
   { key: '/strategy', icon: <RobotOutlined />, label: '策略管理' },
   { key: '/trade', icon: <SwapOutlined />, label: '券商/交易' },
   { key: '/backtest', icon: <FundOutlined />, label: '策略回测' },

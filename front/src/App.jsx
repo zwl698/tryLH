@@ -9,6 +9,7 @@ import StrategyPage from './pages/Strategy';
 import TradePage from './pages/Trade';
 import BacktestPage from './pages/Backtest';
 import RiskPage from './pages/Risk';
+import SmartTradePage from './pages/SmartTrade';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="market" element={<MarketPage />} />
+            <Route path="smart-trade" element={<SmartTradePage />} />
             <Route path="strategy" element={<StrategyPage />} />
             <Route path="trade" element={<TradePage />} />
             <Route path="backtest" element={<BacktestPage />} />
@@ -36,4 +38,3 @@ function App() {
 }
 
 export default App;
-

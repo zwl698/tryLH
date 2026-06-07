@@ -16,7 +16,7 @@ import {getSystemStatus} from '../services/api';
 import BrokerConnect from './BrokerConnect';
 
 const { Header, Sider, Content } = Layout;
-const APP_NAME = '清北协同学的A股量化交易系统';
+const APP_NAME = 'A股Win量化系统';
 
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '系统总览' },

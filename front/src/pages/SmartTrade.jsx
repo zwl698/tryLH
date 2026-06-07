@@ -114,7 +114,7 @@ export default function SmartTradePage() {
       setPlans(planData || []);
       setUniverse(universeData || []);
       setBenchmark(benchmarkData || []);
-      const defaultStrategy = 'momentum';
+      const defaultStrategy = 'macd_t';
       form.setFieldsValue({
         strategy_type: defaultStrategy,
         plan_id: defaultPlanForStrategy(planData || [], defaultStrategy),
@@ -129,7 +129,7 @@ export default function SmartTradePage() {
     }
   };
 
-  const selectedStrategy = Form.useWatch('strategy_type', form) || 'momentum';
+  const selectedStrategy = Form.useWatch('strategy_type', form) || 'macd_t';
   const selectedMode = Form.useWatch('mode', form) || 'paper';
   const selectedPlanID = Form.useWatch('plan_id', form);
   const selectedPlan = useMemo(
@@ -216,6 +216,8 @@ export default function SmartTradePage() {
           <Tag>60日 {formatPercent((r.metrics?.return_60 || 0) / 100)}</Tag>
           <Tag>回撤 {Number(r.metrics?.max_drawdown || 0).toFixed(2)}%</Tag>
           <Tag>波动 {Number(r.metrics?.volatility || 0).toFixed(2)}%</Tag>
+          <Tag>MACD分 {Number(r.metrics?.macd_signal_score || 0).toFixed(2)}</Tag>
+          <Tag>柱线 {Number(r.metrics?.macd_hist || 0).toFixed(2)}</Tag>
         </Space>
       ),
     },

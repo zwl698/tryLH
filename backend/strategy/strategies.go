@@ -901,3 +901,293 @@ func (s *GridStrategy) checkGrid(code string, currentPrice decimal.Decimal) ([]m
 	s.grids[code] = grids
 	return signals, nil
 }
+
+// ==================== MACD短线做T策略 ====================
+
+// MACDTStrategy 使用 MACD 动能改善捕捉短线反弹，并用止盈、止损和柱线转弱控制持仓。
+type MACDTStrategy struct {
+	BaseStrategy
+	fastPeriod   int
+	slowPeriod   int
+	signalPeriod int
+	trendPeriod  int
+	histTurnDays int
+	maxHoldDays  int
+	takeProfit   float64
+	stopLoss     float64
+	history      map[string][]models.KLine
+	positions    map[string]bool
+	entryPrices  map[string]decimal.Decimal
+	entryDays    map[string]int
+}
+
+type macdPoint struct {
+	dif  float64
+	dea  float64
+	hist float64
+}
+
+// NewMACDTStrategy 创建 MACD 短线做T策略。
+func NewMACDTStrategy(config models.StrategyConfig, logger *zap.Logger) *MACDTStrategy {
+	s := &MACDTStrategy{
+		BaseStrategy: NewBaseStrategy(config, logger),
+		history:      make(map[string][]models.KLine),
+		positions:    make(map[string]bool),
+		entryPrices:  make(map[string]decimal.Decimal),
+		entryDays:    make(map[string]int),
+	}
+	s.loadParams()
+	return s
+}
+
+func (s *MACDTStrategy) Type() string { return "macd_t" }
+
+func (s *MACDTStrategy) Init(config models.StrategyConfig) error {
+	s.loadParams()
+	s.history = make(map[string][]models.KLine)
+	s.positions = make(map[string]bool)
+	s.entryPrices = make(map[string]decimal.Decimal)
+	s.entryDays = make(map[string]int)
+	return nil
+}
+
+func (s *MACDTStrategy) loadParams() {
+	s.fastPeriod = s.getIntParam("fast_period", 12)
+	s.slowPeriod = s.getIntParam("slow_period", 26)
+	s.signalPeriod = s.getIntParam("signal_period", 9)
+	s.trendPeriod = s.getIntParam("trend_period", 20)
+	s.histTurnDays = s.getIntParam("hist_turn_days", 3)
+	s.maxHoldDays = s.getIntParam("max_hold_days", 5)
+	s.takeProfit = s.getFloatParam("take_profit_pct", 0.025)
+	s.stopLoss = s.getFloatParam("stop_loss_pct", 0.018)
+	if s.fastPeriod <= 0 {
+		s.fastPeriod = 12
+	}
+	if s.slowPeriod <= s.fastPeriod {
+		s.slowPeriod = s.fastPeriod + 14
+	}
+	if s.signalPeriod <= 0 {
+		s.signalPeriod = 9
+	}
+	if s.trendPeriod <= 0 {
+		s.trendPeriod = 20
+	}
+	if s.histTurnDays <= 0 {
+		s.histTurnDays = 3
+	}
+	if s.maxHoldDays <= 0 {
+		s.maxHoldDays = 5
+	}
+}
+
+func (s *MACDTStrategy) OnBar(ctx context.Context, kline models.KLine) ([]models.Signal, error) {
+	var signals []models.Signal
+
+	code := kline.StockCode
+	s.history[code] = append(s.history[code], kline)
+	need := s.slowPeriod + s.signalPeriod + s.histTurnDays + 2
+	if len(s.history[code]) > need*3 {
+		s.history[code] = s.history[code][len(s.history[code])-need*3:]
+	}
+	if len(s.history[code]) < need {
+		return signals, nil
+	}
+
+	history := s.history[code]
+	points := s.calcMACD(history)
+	if len(points) < s.histTurnDays+2 {
+		return signals, nil
+	}
+
+	curr := points[len(points)-1]
+	prev := points[len(points)-2]
+	hasPosition := s.positions[code]
+	if hasPosition {
+		s.entryDays[code]++
+		entry := s.entryPrices[code]
+		ret := decimal.Zero
+		if !entry.IsZero() {
+			ret = kline.Close.Sub(entry).Div(entry)
+		}
+		retFloat := ret.InexactFloat64()
+		deathCross := prev.dif >= prev.dea && curr.dif < curr.dea
+		histWeak := curr.hist < prev.hist
+		holdTooLong := s.entryDays[code] >= s.maxHoldDays && histWeak
+
+		if retFloat >= s.takeProfit || retFloat <= -s.stopLoss || deathCross || holdTooLong {
+			reason := fmt.Sprintf("MACD做T卖出: 收益%.2f%%, DIF %.4f, DEA %.4f, 柱线 %.4f", retFloat*100, curr.dif, curr.dea, curr.hist)
+			signals = append(signals, models.Signal{
+				StrategyID: s.ID(),
+				StockCode:  code,
+				Side:       models.OrderSideSell,
+				Type:       models.OrderTypeLimit,
+				Price:      kline.Close,
+				Volume:     s.calcMACDTVolume(kline.Close),
+				Reason:     reason,
+				Timestamp:  time.Now(),
+			})
+			delete(s.positions, code)
+			delete(s.entryPrices, code)
+			delete(s.entryDays, code)
+		}
+		return signals, nil
+	}
+
+	if s.macdBuySetup(history, points) {
+		signals = append(signals, models.Signal{
+			StrategyID: s.ID(),
+			StockCode:  code,
+			Side:       models.OrderSideBuy,
+			Type:       models.OrderTypeLimit,
+			Price:      kline.Close,
+			Volume:     s.calcMACDTVolume(kline.Close),
+			Reason:     fmt.Sprintf("MACD做T买入: DIF %.4f 上穿/强于 DEA %.4f, 柱线连续改善 %.4f", curr.dif, curr.dea, curr.hist),
+			Timestamp:  time.Now(),
+		})
+		s.positions[code] = true
+		s.entryPrices[code] = kline.Close
+		s.entryDays[code] = 0
+	}
+
+	return signals, nil
+}
+
+func (s *MACDTStrategy) OnQuote(ctx context.Context, quote models.StockQuote) ([]models.Signal, error) {
+	return nil, nil
+}
+
+func (s *MACDTStrategy) OnTick(ctx context.Context, quote models.StockQuote) ([]models.Signal, error) {
+	return nil, nil
+}
+
+func (s *MACDTStrategy) GetParamDefs() []ParamDef {
+	return []ParamDef{
+		{Key: "fast_period", Name: "快线EMA周期", Type: "int", Default: 12, Min: 5, Max: 30, Description: "MACD快线EMA周期，默认12。"},
+		{Key: "slow_period", Name: "慢线EMA周期", Type: "int", Default: 26, Min: 10, Max: 60, Description: "MACD慢线EMA周期，默认26，需大于快线。"},
+		{Key: "signal_period", Name: "信号线周期", Type: "int", Default: 9, Min: 3, Max: 20, Description: "DEA信号线EMA周期，默认9。"},
+		{Key: "trend_period", Name: "趋势过滤周期", Type: "int", Default: 20, Min: 10, Max: 60, Description: "短线做T的均线过滤周期，默认20日。"},
+		{Key: "hist_turn_days", Name: "柱线转强天数", Type: "int", Default: 3, Min: 2, Max: 8, Description: "要求MACD柱线连续改善的天数。"},
+		{Key: "max_hold_days", Name: "最长持有天数", Type: "int", Default: 5, Min: 1, Max: 20, Description: "超过该天数且柱线转弱则退出。"},
+		{Key: "take_profit_pct", Name: "短线止盈", Type: "float", Default: 0.025, Min: 0.005, Max: 0.15, Description: "达到该收益率卖出，0.025表示2.5%。"},
+		{Key: "stop_loss_pct", Name: "短线止损", Type: "float", Default: 0.018, Min: 0.005, Max: 0.1, Description: "达到该亏损率卖出，0.018表示1.8%。"},
+	}
+}
+
+func (s *MACDTStrategy) macdBuySetup(klines []models.KLine, points []macdPoint) bool {
+	curr := points[len(points)-1]
+	prev := points[len(points)-2]
+	goldenCross := prev.dif <= prev.dea && curr.dif > curr.dea
+	macdBullish := curr.dif > curr.dea && curr.hist > 0
+	if !goldenCross && !macdBullish {
+		return false
+	}
+	if !macdHistRising(points, s.histTurnDays) {
+		return false
+	}
+	ma := decimal.Zero
+	if len(klines) >= s.trendPeriod {
+		ma = simpleCloseMA(klines[len(klines)-s.trendPeriod:])
+	}
+	if !ma.IsZero() && klines[len(klines)-1].Close.LessThan(ma.Mul(decimal.NewFromFloat(0.97))) {
+		return false
+	}
+	if volumeRatio(klines, 5, 20) < 0.75 {
+		return false
+	}
+	return true
+}
+
+func (s *MACDTStrategy) calcMACD(klines []models.KLine) []macdPoint {
+	closes := make([]float64, 0, len(klines))
+	for _, kline := range klines {
+		closes = append(closes, kline.Close.InexactFloat64())
+	}
+	fast := emaFloatSeries(closes, s.fastPeriod)
+	slow := emaFloatSeries(closes, s.slowPeriod)
+	dif := make([]float64, len(closes))
+	for i := range closes {
+		dif[i] = fast[i] - slow[i]
+	}
+	dea := emaFloatSeries(dif, s.signalPeriod)
+	points := make([]macdPoint, len(closes))
+	for i := range closes {
+		points[i] = macdPoint{
+			dif:  dif[i],
+			dea:  dea[i],
+			hist: (dif[i] - dea[i]) * 2,
+		}
+	}
+	return points
+}
+
+func (s *MACDTStrategy) calcMACDTVolume(price decimal.Decimal) int64 {
+	config := s.GetConfig()
+	if !config.MaxPosition.IsZero() {
+		volume := config.MaxPosition.Div(price).IntPart()
+		return (volume / 100) * 100
+	}
+	return 100
+}
+
+func emaFloatSeries(values []float64, period int) []float64 {
+	result := make([]float64, len(values))
+	if len(values) == 0 {
+		return result
+	}
+	if period <= 0 {
+		period = 1
+	}
+	k := 2.0 / float64(period+1)
+	result[0] = values[0]
+	for i := 1; i < len(values); i++ {
+		result[i] = values[i]*k + result[i-1]*(1-k)
+	}
+	return result
+}
+
+func macdHistRising(points []macdPoint, days int) bool {
+	if days <= 1 {
+		days = 2
+	}
+	if len(points) < days {
+		return false
+	}
+	start := len(points) - days
+	for i := start + 1; i < len(points); i++ {
+		if points[i].hist <= points[i-1].hist {
+			return false
+		}
+	}
+	return true
+}
+
+func simpleCloseMA(klines []models.KLine) decimal.Decimal {
+	if len(klines) == 0 {
+		return decimal.Zero
+	}
+	sum := decimal.Zero
+	for _, kline := range klines {
+		sum = sum.Add(kline.Close)
+	}
+	return sum.Div(decimal.NewFromInt(int64(len(klines))))
+}
+
+func volumeRatio(klines []models.KLine, recentDays, baseDays int) float64 {
+	if len(klines) < recentDays+baseDays || recentDays <= 0 || baseDays <= 0 {
+		return 1
+	}
+	recentStart := len(klines) - recentDays
+	baseStart := recentStart - baseDays
+	recentSum := int64(0)
+	for _, kline := range klines[recentStart:] {
+		recentSum += kline.Volume
+	}
+	baseSum := int64(0)
+	for _, kline := range klines[baseStart:recentStart] {
+		baseSum += kline.Volume
+	}
+	if baseSum <= 0 {
+		return 1
+	}
+	return (float64(recentSum) / float64(recentDays)) / (float64(baseSum) / float64(baseDays))
+}

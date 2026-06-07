@@ -526,6 +526,21 @@ func (s *Server) getStrategyTemplates(c *gin.Context) {
 				{"key": "grid_volume", "name": "每格交易量", "type": "int", "default": 100, "min": 100, "max": 10000, "description": "每次触发网格买卖的股数，A股默认最小100股。"},
 			},
 		},
+		{
+			"type":        "macd_t",
+			"name":        "MACD短线做T策略",
+			"description": "围绕MACD金叉、DIF强于DEA、柱线连续改善和量能不弱做短线交易，使用短线止盈、止损、最长持有天数和柱线转弱退出。",
+			"params": []gin.H{
+				{"key": "fast_period", "name": "快线EMA周期", "type": "int", "default": 12, "min": 5, "max": 30, "description": "MACD快线EMA周期，默认12。"},
+				{"key": "slow_period", "name": "慢线EMA周期", "type": "int", "default": 26, "min": 10, "max": 60, "description": "MACD慢线EMA周期，默认26，需大于快线。"},
+				{"key": "signal_period", "name": "信号线周期", "type": "int", "default": 9, "min": 3, "max": 20, "description": "DEA信号线EMA周期，默认9。"},
+				{"key": "trend_period", "name": "趋势过滤周期", "type": "int", "default": 20, "min": 10, "max": 60, "description": "价格过度跌破趋势线时不追做T，默认20日。"},
+				{"key": "hist_turn_days", "name": "柱线转强天数", "type": "int", "default": 3, "min": 2, "max": 8, "description": "要求MACD柱线连续改善的天数。"},
+				{"key": "max_hold_days", "name": "最长持有天数", "type": "int", "default": 5, "min": 1, "max": 20, "description": "超过该天数且柱线转弱则退出。"},
+				{"key": "take_profit_pct", "name": "短线止盈", "type": "float", "default": 0.025, "min": 0.005, "max": 0.15, "description": "达到该收益率卖出，0.025表示2.5%。"},
+				{"key": "stop_loss_pct", "name": "短线止损", "type": "float", "default": 0.018, "min": 0.005, "max": 0.1, "description": "达到该亏损率卖出，0.018表示1.8%。"},
+			},
+		},
 	}
 	s.responseSuccess(c, templates)
 }
@@ -1100,6 +1115,8 @@ func newStrategyFromConfig(stratConfig models.StrategyConfig, logger *zap.Logger
 		return strategy.NewMeanReversionStrategy(stratConfig, logger), nil
 	case "grid":
 		return strategy.NewGridStrategy(stratConfig, logger), nil
+	case "macd_t":
+		return strategy.NewMACDTStrategy(stratConfig, logger), nil
 	default:
 		return nil, fmt.Errorf("不支持的策略类型: %s", stratConfig.Type)
 	}
@@ -1141,6 +1158,8 @@ func strategyDisplayName(strategyType string) string {
 		return "均值回归策略"
 	case "grid":
 		return "网格交易策略"
+	case "macd_t":
+		return "MACD短线做T策略"
 	default:
 		return strategyType
 	}

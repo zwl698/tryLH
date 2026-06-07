@@ -88,6 +88,26 @@ func TestNewStrategyFromConfigCreatesSmartStrategy(t *testing.T) {
 	}
 }
 
+func TestNewStrategyFromConfigCreatesMACDTStrategy(t *testing.T) {
+	strat, err := newStrategyFromConfig(models.StrategyConfig{
+		ID:          "smart_macd_t",
+		Name:        "智能MACD做T策略",
+		Type:        "macd_t",
+		Stocks:      []string{"600519"},
+		Params:      map[string]interface{}{"fast_period": 12, "slow_period": 26, "signal_period": 9, "trend_period": 20, "hist_turn_days": 3, "max_hold_days": 5, "take_profit_pct": 0.025, "stop_loss_pct": 0.018},
+		Status:      models.StrategyStatusPaused,
+		MaxPosition: decimal.NewFromInt(100000),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("创建MACD做T策略失败: %v", err)
+	}
+	if strat.ID() != "smart_macd_t" || strat.Type() != "macd_t" {
+		t.Fatalf("MACD做T策略信息不正确: id=%s type=%s", strat.ID(), strat.Type())
+	}
+}
+
 func TestRankCandidateBacktestsPrefersPositiveRiskAdjustedReturn(t *testing.T) {
 	candidates := []candidateBacktest{
 		{StockCode: "000001", TotalReturn: -3, MaxDrawdown: 5, SharpeRatio: -0.2, TotalTrades: 2},

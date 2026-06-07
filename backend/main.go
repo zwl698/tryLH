@@ -251,7 +251,34 @@ func registerBuiltInStrategies(engine *strategy.Engine, logger *zap.Logger) {
 	grid := strategy.NewGridStrategy(gridCfg, logger)
 	engine.RegisterStrategy(grid)
 
-	logger.Info("内置策略注册完成", zap.Int("count", 5))
+	// MACD短线做T策略
+	macdTCfg := models.StrategyConfig{
+		ID:          "builtin_macd_t",
+		Name:        "MACD短线做T策略",
+		Type:        "macd_t",
+		Description: "围绕MACD金叉、DIF强于DEA、柱线连续改善和量能不弱做短线交易，使用短线止盈、止损、最长持有天数和柱线转弱退出。",
+		Stocks:      []string{},
+		Params: map[string]interface{}{
+			"fast_period":     12,
+			"slow_period":     26,
+			"signal_period":   9,
+			"trend_period":    20,
+			"hist_turn_days":  3,
+			"max_hold_days":   5,
+			"take_profit_pct": 0.025,
+			"stop_loss_pct":   0.018,
+		},
+		Status:      models.StrategyStatusPaused,
+		MaxPosition: decimal.NewFromFloat(100000),
+		StopLoss:    decimal.NewFromFloat(0.018),
+		TakeProfit:  decimal.NewFromFloat(0.025),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	macdT := strategy.NewMACDTStrategy(macdTCfg, logger)
+	engine.RegisterStrategy(macdT)
+
+	logger.Info("内置策略注册完成", zap.Int("count", 6))
 }
 
 // processSignals 处理交易信号

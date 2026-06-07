@@ -143,6 +143,13 @@ export default function BacktestPage() {
         messageApi.error('长期均线周期必须大于短期均线周期');
         return;
       }
+      if (
+        values.strategy_type === 'macd_t' &&
+        Number(params.slow_period) <= Number(params.fast_period)
+      ) {
+        messageApi.error('MACD慢线周期必须大于快线周期');
+        return;
+      }
 
       const data = await runBacktest({
         strategy_type: values.strategy_type,

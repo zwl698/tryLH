@@ -421,6 +421,91 @@ func TestGridStrategy_GetParamDefs(t *testing.T) {
 	}
 }
 
+// ==================== MACD短线做T策略测试 ====================
+
+func TestMACDTStrategy_Create(t *testing.T) {
+	cfg := models.StrategyConfig{
+		ID:     "test_macd_t",
+		Name:   "MACD做T测试",
+		Type:   "macd_t",
+		Stocks: []string{"600000"},
+		Params: map[string]interface{}{
+			"fast_period":     12,
+			"slow_period":     26,
+			"signal_period":   9,
+			"trend_period":    20,
+			"hist_turn_days":  3,
+			"max_hold_days":   5,
+			"take_profit_pct": 0.025,
+			"stop_loss_pct":   0.018,
+		},
+		MaxPosition: decimal.NewFromFloat(100000),
+	}
+
+	s := NewMACDTStrategy(cfg, zap.NewNop())
+	if s.Type() != "macd_t" {
+		t.Errorf("策略类型不正确: %s", s.Type())
+	}
+}
+
+func TestMACDTStrategy_BuySignalOnImprovingMACD(t *testing.T) {
+	cfg := models.StrategyConfig{
+		ID:     "test_macd_t_buy",
+		Name:   "MACD做T买入测试",
+		Type:   "macd_t",
+		Stocks: []string{"600000"},
+		Params: map[string]interface{}{
+			"fast_period":     12,
+			"slow_period":     26,
+			"signal_period":   9,
+			"trend_period":    20,
+			"hist_turn_days":  3,
+			"max_hold_days":   5,
+			"take_profit_pct": 0.025,
+			"stop_loss_pct":   0.018,
+		},
+		MaxPosition: decimal.NewFromFloat(100000),
+	}
+	s := NewMACDTStrategy(cfg, zap.NewNop())
+	ctx := context.Background()
+
+	var signals []models.Signal
+	for i := 1; i <= 35; i++ {
+		sigs, _ := s.OnBar(ctx, makeKLine("600000", i, 20.0-float64(i)*0.12))
+		signals = append(signals, sigs...)
+	}
+	for i := 36; i <= 75; i++ {
+		sigs, _ := s.OnBar(ctx, makeKLine("600000", i, 15.8+float64(i-35)*0.28))
+		signals = append(signals, sigs...)
+	}
+
+	hasBuySignal := false
+	for _, sig := range signals {
+		if sig.Side == models.OrderSideBuy {
+			hasBuySignal = true
+			break
+		}
+	}
+	if !hasBuySignal {
+		t.Fatal("MACD柱线改善并转强时应产生买入信号")
+	}
+}
+
+func TestMACDTStrategy_GetParamDefs(t *testing.T) {
+	cfg := models.StrategyConfig{
+		ID:     "test_macd_t_params",
+		Name:   "MACD参数定义测试",
+		Type:   "macd_t",
+		Stocks: []string{"600000"},
+		Params: map[string]interface{}{},
+	}
+	s := NewMACDTStrategy(cfg, zap.NewNop())
+	defs := s.GetParamDefs()
+	if len(defs) != 8 {
+		t.Errorf("参数定义数量不正确: 期望 8, 实际 %d", len(defs))
+	}
+}
+
 // ==================== BaseStrategy 测试 ====================
 
 func TestBaseStrategy_GetSetParams(t *testing.T) {

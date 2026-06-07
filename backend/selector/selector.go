@@ -54,6 +54,11 @@ type StockMetrics struct {
 	VolumeTrend        float64 `json:"volume_trend"`
 	MeanReversionScore float64 `json:"mean_reversion_score"`
 	GridSuitability    float64 `json:"grid_suitability"`
+	MACDDIF            float64 `json:"macd_dif"`
+	MACDDEA            float64 `json:"macd_dea"`
+	MACDHist           float64 `json:"macd_hist"`
+	MACDHistSlope      float64 `json:"macd_hist_slope"`
+	MACDSignalScore    float64 `json:"macd_signal_score"`
 }
 
 type StockPick struct {
@@ -131,6 +136,14 @@ func BuiltInPlans() []SelectionPlan {
 			StrategyTypes: []string{"grid"},
 			DefaultTopN:   3,
 			Metrics:       []string{"区间波动", "趋势斜率", "价格区间", "成交量稳定性"},
+		},
+		{
+			ID:            "macd_short_t",
+			Name:          "MACD短线做T选股",
+			Description:   "寻找DIF强于DEA、MACD柱线转强、量能不弱且短期涨幅不过热的股票，适合短线做T研究。",
+			StrategyTypes: []string{"macd_t"},
+			DefaultTopN:   5,
+			Metrics:       []string{"DIF/DEA", "MACD柱线", "柱线斜率", "量能", "短期回撤"},
 		},
 		{
 			ID:            "balanced_smart",
@@ -347,6 +360,8 @@ func RecommendedParams(strategyType string, picks []StockPick) map[string]interf
 			params["lower_price"] = round2(picks[0].Metrics.RecentLow)
 		}
 		return params
+	case "macd_t":
+		return map[string]interface{}{"fast_period": 12, "slow_period": 26, "signal_period": 9, "trend_period": 20, "hist_turn_days": 3, "max_hold_days": 5, "take_profit_pct": 0.025, "stop_loss_pct": 0.018}
 	default:
 		return map[string]interface{}{}
 	}
@@ -466,6 +481,7 @@ func calculateMetrics(klines []models.KLine) StockMetrics {
 		rangePct = (recentHigh - recentLow) / last * 100
 	}
 	gridSuitability := clamp(100-math.Abs(volatility-35)*1.1-math.Abs(return60)*1.2-drawdown*0.7+rangePct*0.25, 0, 100)
+	macdDIF, macdDEA, macdHist, macdSlope, macdScore := macdSnapshot(closes, 12, 26, 9)
 
 	return StockMetrics{
 		LastClose:          round2(last),
@@ -480,6 +496,11 @@ func calculateMetrics(klines []models.KLine) StockMetrics {
 		VolumeTrend:        round2(volumeTrend),
 		MeanReversionScore: round2(meanReversion),
 		GridSuitability:    round2(gridSuitability),
+		MACDDIF:            round2(macdDIF),
+		MACDDEA:            round2(macdDEA),
+		MACDHist:           round2(macdHist),
+		MACDHistSlope:      round2(macdSlope),
+		MACDSignalScore:    round2(macdScore),
 	}
 }
 
@@ -493,6 +514,8 @@ func scoreByPlan(planID string, m StockMetrics) float64 {
 		return clamp(45+m.MeanReversionScore*16-m.Return20*0.45-m.MaxDrawdown*0.2+volatilityBandScore(m.Volatility), 0, 100)
 	case "grid_suitable":
 		return clamp(m.GridSuitability, 0, 100)
+	case "macd_short_t":
+		return clamp(35+m.MACDSignalScore*0.45+m.TrendStrength*2.2+m.VolumeTrend*5+volatilityBandScore(m.Volatility)-math.Abs(m.Return20-6)*0.55-m.MaxDrawdown*0.45, 0, 100)
 	case "institutional_ensemble":
 		return clamp(50+m.Return20*0.75+m.Return60*0.35+m.TrendStrength*1.8+(m.BreakoutStrength-90)*0.8+m.VolumeTrend*5+volatilityBandScore(m.Volatility)-m.MaxDrawdown*0.85, 0, 100)
 	default:
@@ -525,6 +548,11 @@ func explainPick(planID string, m StockMetrics) []string {
 		return append([]string{
 			fmt.Sprintf("网格适配分 %.2f，近期区间 %.2f-%.2f", m.GridSuitability, m.RecentLow, m.RecentHigh),
 			fmt.Sprintf("趋势不过分单边，60日收益 %.2f%%", m.Return60),
+		}, common...)
+	case "macd_short_t":
+		return append([]string{
+			fmt.Sprintf("MACD形态分 %.2f，DIF %.2f / DEA %.2f", m.MACDSignalScore, m.MACDDIF, m.MACDDEA),
+			fmt.Sprintf("MACD柱线 %.2f，柱线斜率 %.2f，量能比 %.2f", m.MACDHist, m.MACDHistSlope, m.VolumeTrend),
 		}, common...)
 	case "institutional_ensemble":
 		return append([]string{
@@ -562,6 +590,66 @@ func annualizedVolatility(closes []float64) float64 {
 		returns = append(returns, closes[i]/closes[i-1]-1)
 	}
 	return stddev(returns) * math.Sqrt(252) * 100
+}
+
+func macdSnapshot(closes []float64, fastPeriod, slowPeriod, signalPeriod int) (float64, float64, float64, float64, float64) {
+	if len(closes) == 0 {
+		return 0, 0, 0, 0, 0
+	}
+	fast := emaSeries(closes, fastPeriod)
+	slow := emaSeries(closes, slowPeriod)
+	difSeries := make([]float64, len(closes))
+	for i := range closes {
+		difSeries[i] = fast[i] - slow[i]
+	}
+	deaSeries := emaSeries(difSeries, signalPeriod)
+	last := len(closes) - 1
+	dif := difSeries[last]
+	dea := deaSeries[last]
+	hist := (dif - dea) * 2
+	slope := 0.0
+	if len(closes) >= 4 {
+		prevHist := (difSeries[last-3] - deaSeries[last-3]) * 2
+		slope = hist - prevHist
+	}
+
+	score := 45.0
+	if dif > dea {
+		score += 15
+	}
+	if hist > 0 {
+		score += 10
+	}
+	if slope > 0 {
+		score += 15
+	}
+	if dif > 0 {
+		score += 8
+	}
+	if len(closes) >= 3 {
+		prevHist := (difSeries[last-1] - deaSeries[last-1]) * 2
+		prevPrevHist := (difSeries[last-2] - deaSeries[last-2]) * 2
+		if hist > prevHist && prevHist > prevPrevHist {
+			score += 7
+		}
+	}
+	return dif, dea, hist, slope, clamp(score, 0, 100)
+}
+
+func emaSeries(values []float64, period int) []float64 {
+	result := make([]float64, len(values))
+	if len(values) == 0 {
+		return result
+	}
+	if period <= 0 {
+		period = 1
+	}
+	k := 2.0 / float64(period+1)
+	result[0] = values[0]
+	for i := 1; i < len(values); i++ {
+		result[i] = values[i]*k + result[i-1]*(1-k)
+	}
+	return result
 }
 
 func maxDrawdown(closes []float64) float64 {

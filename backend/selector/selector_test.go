@@ -38,6 +38,7 @@ func TestDefaultPlanForStrategy(t *testing.T) {
 		"momentum":         "momentum_strength",
 		"mean_reversion":   "oversold_rebound",
 		"grid":             "grid_suitable",
+		"macd_t":           "macd_short_t",
 		"unknown_strategy": "balanced_smart",
 	}
 
@@ -46,6 +47,34 @@ func TestDefaultPlanForStrategy(t *testing.T) {
 		if plan.ID != expectedPlan {
 			t.Fatalf("%s 默认选股方案应为 %s，实际 %s", strategyType, expectedPlan, plan.ID)
 		}
+	}
+}
+
+func TestMACDShortTPlanPrefersImprovingHistogram(t *testing.T) {
+	bullish := StockMetrics{
+		Return20:        5,
+		TrendStrength:   2,
+		Volatility:      28,
+		MaxDrawdown:     5,
+		VolumeTrend:     1.2,
+		MACDDIF:         0.4,
+		MACDDEA:         0.2,
+		MACDHist:        0.4,
+		MACDHistSlope:   0.3,
+		MACDSignalScore: 90,
+	}
+	weak := bullish
+	weak.MACDDIF = -0.1
+	weak.MACDDEA = 0.1
+	weak.MACDHist = -0.4
+	weak.MACDHistSlope = -0.2
+	weak.MACDSignalScore = 40
+	weak.MaxDrawdown = 18
+
+	bullishScore := scoreByPlan("macd_short_t", bullish)
+	weakScore := scoreByPlan("macd_short_t", weak)
+	if bullishScore <= weakScore {
+		t.Fatalf("MACD短线做T方案应优先柱线转强样本，强 %.2f 弱 %.2f", bullishScore, weakScore)
 	}
 }
 

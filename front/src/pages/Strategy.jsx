@@ -44,6 +44,7 @@ const STRATEGY_TYPE_INFO = {
   momentum: { name: '动量策略', color: '#eb2f96', icon: '🚀' },
   mean_reversion: { name: '均值回归', color: '#13c2c2', icon: '📊' },
   grid: { name: '网格交易', color: '#fa8c16', icon: '🔲' },
+  macd_t: { name: 'MACD做T', color: '#2f54eb', icon: 'M' },
 };
 
 export default function StrategyPage() {

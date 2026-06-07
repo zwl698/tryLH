@@ -125,6 +125,64 @@ func TestBacktestEngine_Run_Turtle(t *testing.T) {
 	}
 }
 
+func TestBacktestEngine_Run_MACDT(t *testing.T) {
+	logger := zap.NewNop()
+	btEngine := NewBacktestEngine(0.0003, 0.001, 0.001, logger)
+
+	cfg := models.StrategyConfig{
+		ID:     "bt_macd_t",
+		Name:   "回测MACD做T",
+		Type:   "macd_t",
+		Stocks: []string{"600000"},
+		Params: map[string]interface{}{
+			"fast_period":     12,
+			"slow_period":     26,
+			"signal_period":   9,
+			"trend_period":    20,
+			"hist_turn_days":  3,
+			"max_hold_days":   5,
+			"take_profit_pct": 0.018,
+			"stop_loss_pct":   0.018,
+		},
+		MaxPosition: decimal.NewFromFloat(100000),
+		Status:      models.StrategyStatusPaused,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	s := strategy.NewMACDTStrategy(cfg, logger)
+	klines := map[string][]models.KLine{
+		"600000": generateMACDTBacktestKLines("600000"),
+	}
+
+	result, err := btEngine.Run(
+		context.Background(),
+		s,
+		klines,
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local),
+		time.Date(2024, 3, 31, 0, 0, 0, 0, time.Local),
+		decimal.NewFromInt(1000000),
+	)
+	if err != nil {
+		t.Fatalf("回测失败: %v", err)
+	}
+	if result == nil {
+		t.Fatal("回测结果不应为 nil")
+	}
+	if result.StrategyID != "bt_macd_t" {
+		t.Fatalf("策略ID不正确: %s", result.StrategyID)
+	}
+	if result.ExecutionModel != "next_open" {
+		t.Fatalf("MACD做T回测应沿用下一交易日开盘成交模型，实际 %s", result.ExecutionModel)
+	}
+	if result.TotalTrades == 0 {
+		t.Fatal("MACD做T回测应在柱线改善后完成至少一笔平仓交易")
+	}
+	if len(result.Trades) != result.TotalTrades {
+		t.Fatalf("交易明细数量应等于完成交易数，明细 %d 完成 %d", len(result.Trades), result.TotalTrades)
+	}
+}
+
 func TestBacktestEngine_CalcCommission(t *testing.T) {
 	logger := zap.NewNop()
 	btEngine := NewBacktestEngine(0.0003, 0.001, 0.001, logger)
@@ -331,5 +389,35 @@ func TestBacktestEngine_OrganizeByDate(t *testing.T) {
 	expectedDate := time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local)
 	if _, ok := result[expectedDate]; !ok {
 		t.Errorf("应使用本地自然日作为回测日期: %s", expectedDate)
+	}
+}
+
+func generateMACDTBacktestKLines(code string) []models.KLine {
+	rows := make([]models.KLine, 0, 80)
+	baseDate := time.Date(2024, 1, 2, 15, 0, 0, 0, time.Local)
+
+	for i := 0; i < 35; i++ {
+		close := 20.0 - float64(i+1)*0.12
+		rows = append(rows, backtestKLine(code, close, int64(1000000+i*10000), baseDate.AddDate(0, 0, i)))
+	}
+	for i := 35; i < 80; i++ {
+		close := 15.8 + float64(i-34)*0.28
+		rows = append(rows, backtestKLine(code, close, int64(1500000+(i%7)*50000), baseDate.AddDate(0, 0, i)))
+	}
+
+	return rows
+}
+
+func backtestKLine(code string, close float64, volume int64, at time.Time) models.KLine {
+	return models.KLine{
+		StockCode: code,
+		Period:    "day",
+		Open:      decimal.NewFromFloat(close),
+		High:      decimal.NewFromFloat(close * 1.015),
+		Low:       decimal.NewFromFloat(close * 0.985),
+		Close:     decimal.NewFromFloat(close),
+		Volume:    volume,
+		Amount:    decimal.NewFromFloat(close * float64(volume)),
+		Timestamp: at,
 	}
 }

@@ -555,6 +555,7 @@ type smartTradeApplyRequest struct {
 }
 
 type candidateBacktest struct {
+	Rank         int     `json:"rank"`
 	StockCode    string  `json:"stock_code"`
 	StockName    string  `json:"stock_name"`
 	TotalReturn  float64 `json:"total_return"`
@@ -563,15 +564,21 @@ type candidateBacktest struct {
 	TotalTrades  int     `json:"total_trades"`
 	FinalCapital float64 `json:"final_capital"`
 	RankScore    float64 `json:"rank_score"`
+	Outcome      string  `json:"outcome"`
+	Selected     bool    `json:"selected"`
 }
 
 type validationSummary struct {
 	CandidateCount int      `json:"candidate_count"`
 	ValidatedCount int      `json:"validated_count"`
 	PositiveCount  int      `json:"positive_count"`
+	FlatCount      int      `json:"flat_count"`
+	NegativeCount  int      `json:"negative_count"`
 	PositiveRate   float64  `json:"positive_rate"`
 	BestReturn     float64  `json:"best_return"`
 	WorstDrawdown  float64  `json:"worst_drawdown"`
+	Deployable     bool     `json:"deployable"`
+	GateReason     string   `json:"gate_reason"`
 	Method         string   `json:"method"`
 	Warnings       []string `json:"warnings"`
 }
@@ -611,7 +618,7 @@ func (s *Server) getSmartTradeBenchmark(c *gin.Context) {
 			"module":       "策略验证",
 			"benchmark":    "研究流程通常不会只看一次组合回测，而会先做候选标的验证和风险调整排序。",
 			"implemented":  true,
-			"system_field": "因子初筛后逐只股票运行策略回测，再按收益、回撤、夏普和交易次数综合排序。",
+			"system_field": "因子初筛后对全量候选逐只运行策略回测，展示盈利、亏损、未入选样本，再按收益、回撤、夏普和交易次数综合排序。",
 		},
 		{
 			"module":       "组合与风控",
@@ -642,20 +649,13 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 	if requestedTopN <= 0 {
 		requestedTopN = 5
 	}
-	selectionTopN := requestedTopN * 4
-	if selectionTopN < 10 {
-		selectionTopN = 10
-	}
-	if selectionTopN > 15 {
-		selectionTopN = 15
-	}
 
 	selection, err := selector.NewEngine(s.marketSvc).Select(c.Request.Context(), selector.SelectionRequest{
 		StrategyType:   req.StrategyType,
 		PlanID:         req.PlanID,
 		Universe:       req.Universe,
 		CandidateCodes: req.CandidateCodes,
-		TopN:           selectionTopN,
+		TopN:           requestedTopN,
 		LookbackDays:   req.LookbackDays,
 	})
 	if err != nil {
@@ -673,11 +673,19 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 		return
 	}
 
-	candidateBacktests := s.validateCandidatesByBacktest(c.Request.Context(), req.StrategyType, selection.Picks, req.Params, startDate, endDate, req.InitCapital)
-	rankedBacktests := rankCandidateBacktests(candidateBacktests, requestedTopN)
-	summary := buildValidationSummary(candidateBacktests)
-	if len(rankedBacktests) > 0 {
-		selection.Picks = reorderPicksByBacktest(selection.Picks, rankedBacktests)
+	validationPicks := selection.Evaluated
+	if len(validationPicks) == 0 {
+		validationPicks = selection.Picks
+	}
+
+	candidateBacktests := s.validateCandidatesByBacktest(c.Request.Context(), req.StrategyType, validationPicks, req.Params, startDate, endDate, req.InitCapital)
+	rankedAllBacktests := rankCandidateBacktests(candidateBacktests, 0)
+	selectedBacktests := rankCandidateBacktests(candidateBacktests, requestedTopN)
+	summary := buildValidationSummary(candidateBacktests, len(validationPicks))
+	rankedAllBacktests = markSelectedBacktests(rankedAllBacktests, selectedBacktests)
+	selectedBacktests = markSelectedBacktests(selectedBacktests, selectedBacktests)
+	if len(selectedBacktests) > 0 {
+		selection.Picks = reorderPicksByBacktest(validationPicks, selectedBacktests)
 	}
 	if len(selection.Picks) > requestedTopN {
 		selection.Picks = selection.Picks[:requestedTopN]
@@ -704,7 +712,7 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 
 	s.responseSuccess(c, gin.H{
 		"workflow": []gin.H{
-			{"step": "select", "status": "done", "text": fmt.Sprintf("因子初筛%d只候选", len(candidateBacktests))},
+			{"step": "select", "status": "done", "text": fmt.Sprintf("因子初筛%d只候选，保留全量验证样本", len(validationPicks))},
 			{"step": "validate", "status": "done", "text": fmt.Sprintf("二次验证%d只，正收益%d只", summary.ValidatedCount, summary.PositiveCount)},
 			{"step": "params", "status": "done", "text": "已按策略和股票特征生成参数"},
 			{"step": "backtest", "status": "done", "text": "已完成真实K线回测"},
@@ -713,7 +721,8 @@ func (s *Server) runSmartTrade(c *gin.Context) {
 		"selection":           selection,
 		"stocks":              stocks,
 		"recommended_params":  params,
-		"candidate_backtests": rankedBacktests,
+		"candidate_backtests": rankedAllBacktests,
+		"selected_backtests":  selectedBacktests,
 		"validation_summary":  summary,
 		"backtest":            result,
 		"start_date":          startDate.Format("2006-01-02"),
@@ -928,6 +937,7 @@ func (s *Server) validateCandidatesByBacktest(ctx context.Context, strategyType 
 			TotalTrades:  result.TotalTrades,
 			FinalCapital: roundFloat(finalCapital, 2),
 			RankScore:    roundFloat(candidateRankScore(totalReturn, maxDrawdown, sharpe, result.TotalTrades), 2),
+			Outcome:      candidateOutcome(totalReturn),
 		})
 	}
 	return results
@@ -949,19 +959,30 @@ func rankCandidateBacktests(candidates []candidateBacktest, topN int) []candidat
 	if topN > 0 && topN < len(ranked) {
 		ranked = ranked[:topN]
 	}
+	for i := range ranked {
+		ranked[i].Rank = i + 1
+	}
 	return ranked
 }
 
-func buildValidationSummary(candidates []candidateBacktest) validationSummary {
+func buildValidationSummary(candidates []candidateBacktest, attemptedCount ...int) validationSummary {
+	candidateCount := len(candidates)
+	if len(attemptedCount) > 0 && attemptedCount[0] > candidateCount {
+		candidateCount = attemptedCount[0]
+	}
 	summary := validationSummary{
-		CandidateCount: len(candidates),
+		CandidateCount: candidateCount,
 		ValidatedCount: len(candidates),
-		Method:         "因子初筛 -> 单股策略回测 -> 收益/回撤/夏普综合排序",
+		Method:         "因子初筛 -> 全量候选单股回测 -> 收益/回撤/夏普综合排序；展示所有验证样本，含亏损和未入选股票",
 		Warnings:       []string{},
 	}
 	if len(candidates) == 0 {
 		summary.Warnings = append(summary.Warnings, "候选股票未完成二次验证，建议检查行情数据或缩小股票池。")
+		summary.GateReason = "没有可验证候选，禁止视为可实盘策略。"
 		return summary
+	}
+	if summary.ValidatedCount < summary.CandidateCount {
+		summary.Warnings = append(summary.Warnings, fmt.Sprintf("%d只候选股票未完成回测验证，未纳入推荐排序。", summary.CandidateCount-summary.ValidatedCount))
 	}
 
 	bestReturn := candidates[0].TotalReturn
@@ -969,6 +990,10 @@ func buildValidationSummary(candidates []candidateBacktest) validationSummary {
 	for _, candidate := range candidates {
 		if candidate.TotalReturn > 0 {
 			summary.PositiveCount++
+		} else if candidate.TotalReturn < 0 {
+			summary.NegativeCount++
+		} else {
+			summary.FlatCount++
 		}
 		if candidate.TotalReturn > bestReturn {
 			bestReturn = candidate.TotalReturn
@@ -981,8 +1006,10 @@ func buildValidationSummary(candidates []candidateBacktest) validationSummary {
 	summary.PositiveRate = roundFloat(float64(summary.PositiveCount)/float64(len(candidates))*100, 2)
 	summary.BestReturn = roundFloat(bestReturn, 2)
 	summary.WorstDrawdown = roundFloat(worstDrawdown, 2)
+	summary.Deployable = summary.PositiveCount > 0 && summary.BestReturn > 0
 	if summary.PositiveCount == 0 {
 		summary.Warnings = append(summary.Warnings, "当前候选策略验证全部为非正收益，系统不会把这视为优质组合，建议换策略或扩大候选池。")
+		summary.GateReason = "全量候选验证没有正收益样本，仅适合研究复盘，不适合应用到实盘。"
 	} else if summary.PositiveRate < 50 {
 		summary.Warnings = append(summary.Warnings, "二次验证正收益比例低于50%，结果可能依赖少数股票，建议谨慎模拟观察。")
 	}
@@ -991,6 +1018,9 @@ func buildValidationSummary(candidates []candidateBacktest) validationSummary {
 	}
 	if summary.BestReturn <= 0 {
 		summary.Warnings = append(summary.Warnings, "最佳单股验证收益仍未转正，这组参数不适合直接实盘。")
+		if summary.GateReason == "" {
+			summary.GateReason = "最佳候选仍未盈利，仅适合研究复盘，不适合应用到实盘。"
+		}
 	}
 	return summary
 }
@@ -1001,6 +1031,29 @@ func candidateRankScore(totalReturn, maxDrawdown, sharpe float64, totalTrades in
 		tradeBonus = 3
 	}
 	return totalReturn - maxDrawdown*0.65 + sharpe*4 + tradeBonus
+}
+
+func candidateOutcome(totalReturn float64) string {
+	switch {
+	case totalReturn > 0:
+		return "profit"
+	case totalReturn < 0:
+		return "loss"
+	default:
+		return "flat"
+	}
+}
+
+func markSelectedBacktests(all []candidateBacktest, selected []candidateBacktest) []candidateBacktest {
+	selectedCodes := make(map[string]bool, len(selected))
+	for _, candidate := range selected {
+		selectedCodes[candidate.StockCode] = true
+	}
+	result := append([]candidateBacktest(nil), all...)
+	for i := range result {
+		result[i].Selected = selectedCodes[result[i].StockCode]
+	}
+	return result
 }
 
 func reorderPicksByBacktest(picks []selector.StockPick, ranked []candidateBacktest) []selector.StockPick {

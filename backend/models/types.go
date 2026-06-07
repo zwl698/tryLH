@@ -198,6 +198,7 @@ type Signal struct {
 type BacktestResult struct {
 	StrategyID     string          `json:"strategy_id"`
 	StrategyName   string          `json:"strategy_name"`
+	ExecutionModel string          `json:"execution_model"`
 	StartDate      time.Time       `json:"start_date"`
 	EndDate        time.Time       `json:"end_date"`
 	InitialCapital decimal.Decimal `json:"initial_capital"`

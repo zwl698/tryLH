@@ -128,8 +128,14 @@ func TestEngineSelectMomentumRanksStrongStocks(t *testing.T) {
 	if len(result.Picks) != 2 {
 		t.Fatalf("应返回2只股票，实际 %d", len(result.Picks))
 	}
+	if len(result.Evaluated) != 3 {
+		t.Fatalf("应保留3只全量有效候选供二次验证，实际 %d", len(result.Evaluated))
+	}
 	if result.Picks[0].StockCode != "000001" {
 		t.Fatalf("强趋势股票应排第一，实际 %+v", result.Picks[0])
+	}
+	if result.Evaluated[0].StockCode != result.Picks[0].StockCode || result.Evaluated[0].Rank != 1 {
+		t.Fatalf("全量候选排名应与推荐排名一致，实际 evaluated=%+v picks=%+v", result.Evaluated, result.Picks)
 	}
 	if result.Picks[0].Score <= result.Picks[1].Score {
 		t.Fatalf("第一名得分应高于第二名: %+v", result.Picks)

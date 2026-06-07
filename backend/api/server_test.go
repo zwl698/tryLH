@@ -102,8 +102,45 @@ func TestRankCandidateBacktestsPrefersPositiveRiskAdjustedReturn(t *testing.T) {
 	if ranked[0].StockCode != "000002" {
 		t.Fatalf("应优先选择风险调整后更好的股票，实际 %+v", ranked[0])
 	}
+	if ranked[0].Rank != 1 || ranked[1].Rank != 2 {
+		t.Fatalf("排序后应写入验证排名: %+v", ranked)
+	}
 	if ranked[0].RankScore <= ranked[1].RankScore {
 		t.Fatalf("排序分数应递减: %+v", ranked)
+	}
+}
+
+func TestRankCandidateBacktestsTopZeroReturnsAllCandidates(t *testing.T) {
+	candidates := []candidateBacktest{
+		{StockCode: "000001", TotalReturn: -3, MaxDrawdown: 5, SharpeRatio: -0.2, TotalTrades: 2},
+		{StockCode: "000002", TotalReturn: 8, MaxDrawdown: 4, SharpeRatio: 1.1, TotalTrades: 3},
+		{StockCode: "000003", TotalReturn: 0, MaxDrawdown: 2, SharpeRatio: 0, TotalTrades: 0},
+	}
+
+	ranked := rankCandidateBacktests(candidates, 0)
+	if len(ranked) != len(candidates) {
+		t.Fatalf("topN=0 应返回全量候选，实际 %+v", ranked)
+	}
+	for i := range ranked {
+		if ranked[i].Rank != i+1 {
+			t.Fatalf("全量候选应保留连续验证排名，实际 %+v", ranked)
+		}
+	}
+}
+
+func TestMarkSelectedBacktestsKeepsLossSamplesVisible(t *testing.T) {
+	all := []candidateBacktest{
+		{StockCode: "000001", TotalReturn: -3, Outcome: "loss"},
+		{StockCode: "000002", TotalReturn: 8, Outcome: "profit"},
+	}
+	selected := []candidateBacktest{{StockCode: "000002"}}
+
+	marked := markSelectedBacktests(all, selected)
+	if len(marked) != 2 {
+		t.Fatalf("标记入选时不应丢弃亏损样本: %+v", marked)
+	}
+	if marked[0].Selected || !marked[1].Selected {
+		t.Fatalf("入选标记不正确: %+v", marked)
 	}
 }
 
@@ -135,6 +172,9 @@ func TestBuildValidationSummaryReportsPositiveRateAndWarnings(t *testing.T) {
 	if summary.ValidatedCount != 3 || summary.PositiveCount != 2 {
 		t.Fatalf("验证摘要数量不正确: %+v", summary)
 	}
+	if summary.NegativeCount != 1 || summary.FlatCount != 0 {
+		t.Fatalf("验证摘要应统计亏损/持平数量: %+v", summary)
+	}
 	if summary.PositiveRate != 66.67 {
 		t.Fatalf("正收益率应按百分比四舍五入，实际 %.2f", summary.PositiveRate)
 	}
@@ -143,5 +183,22 @@ func TestBuildValidationSummaryReportsPositiveRateAndWarnings(t *testing.T) {
 	}
 	if len(summary.Warnings) == 0 {
 		t.Fatalf("高回撤候选应产生风险提示: %+v", summary)
+	}
+	if !summary.Deployable {
+		t.Fatalf("存在正收益候选时可进入模拟/人工复核流程: %+v", summary)
+	}
+}
+
+func TestBuildValidationSummaryBlocksAllLosingCandidates(t *testing.T) {
+	summary := buildValidationSummary([]candidateBacktest{
+		{StockCode: "000001", TotalReturn: -2, MaxDrawdown: 6, SharpeRatio: -0.2},
+		{StockCode: "000002", TotalReturn: -1, MaxDrawdown: 4, SharpeRatio: -0.1},
+	})
+
+	if summary.PositiveCount != 0 || summary.NegativeCount != 2 {
+		t.Fatalf("全亏候选统计不正确: %+v", summary)
+	}
+	if summary.Deployable || summary.GateReason == "" {
+		t.Fatalf("全亏候选应触发实盘门禁: %+v", summary)
 	}
 }

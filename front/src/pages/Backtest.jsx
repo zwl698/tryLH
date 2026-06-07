@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
+    Alert,
     Button,
     Card,
     Col,
@@ -460,6 +461,18 @@ export default function BacktestPage() {
                   </Card>
                 </Col>
               </Row>
+
+              {result.execution_model && (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                  message="成交模型"
+                  description={result.execution_model === 'next_open'
+                    ? '日线策略信号在收盘后确认，回测按下一交易日开盘价撮合，并计入佣金、印花税和滑点。'
+                    : `当前成交模型：${result.execution_model}`}
+                />
+              )}
 
               {/* 权益曲线 */}
               <Card title="权益曲线" size="small" style={{ marginTop: 16 }}>

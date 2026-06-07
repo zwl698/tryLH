@@ -104,9 +104,18 @@ func (e *BacktestEngine) Run(
 		return dates[i].Before(dates[j])
 	})
 
+	var pendingSignals []models.Signal
 	for _, date := range dates {
 		dayKlines := dailyKLines[date]
 		state.DateTrades = 0
+
+		sort.SliceStable(dayKlines, func(i, j int) bool {
+			return dayKlines[i].StockCode < dayKlines[j].StockCode
+		})
+
+		if len(pendingSignals) > 0 {
+			pendingSignals = e.executePendingSignalsAtOpen(state, pendingSignals, dayKlines, date)
+		}
 
 		for _, kline := range dayKlines {
 			// 将K线喂给策略
@@ -116,15 +125,19 @@ func (e *BacktestEngine) Run(
 				continue
 			}
 
-			// 处理信号
-			for _, signal := range signals {
-				e.executeSignal(state, signal, date)
-			}
+			// 日线信号在收盘后才能确认，排队到下一交易日开盘撮合，避免同一根K线的前视偏差。
+			pendingSignals = append(pendingSignals, signals...)
 		}
 
 		// 记录每日权益
 		equity := e.calcEquity(state, dayKlines)
 		e.recordDailyEquity(state, equity, date)
+	}
+	if len(pendingSignals) > 0 {
+		e.logger.Debug("回测结束时存在未成交信号",
+			zap.String("strategy", strategy.Name()),
+			zap.Int("pending_signals", len(pendingSignals)),
+		)
 	}
 
 	// 生成回测结果
@@ -132,8 +145,37 @@ func (e *BacktestEngine) Run(
 	return result, nil
 }
 
+func (e *BacktestEngine) executePendingSignalsAtOpen(state *BacktestState, signals []models.Signal, dayKlines []models.KLine, date time.Time) []models.Signal {
+	openByStock := make(map[string]decimal.Decimal, len(dayKlines))
+	for _, kline := range dayKlines {
+		if kline.Open.GreaterThan(decimal.Zero) {
+			openByStock[kline.StockCode] = kline.Open
+		}
+	}
+
+	remaining := make([]models.Signal, 0)
+	for _, signal := range signals {
+		openPrice, ok := openByStock[signal.StockCode]
+		if !ok {
+			remaining = append(remaining, signal)
+			continue
+		}
+		e.executeSignalAtPrice(state, signal, openPrice, date)
+	}
+	return remaining
+}
+
 // executeSignal 执行交易信号
 func (e *BacktestEngine) executeSignal(state *BacktestState, signal models.Signal, date time.Time) {
+	e.executeSignalAtPrice(state, signal, signal.Price, date)
+}
+
+func (e *BacktestEngine) executeSignalAtPrice(state *BacktestState, signal models.Signal, executionPrice decimal.Decimal, date time.Time) {
+	if executionPrice.LessThanOrEqual(decimal.Zero) {
+		return
+	}
+	signal.Price = executionPrice
+
 	// 考虑滑点
 	execPrice := signal.Price
 	if signal.Side == models.OrderSideBuy {
@@ -366,6 +408,7 @@ func (e *BacktestEngine) generateResult(
 	return &models.BacktestResult{
 		StrategyID:     s.ID(),
 		StrategyName:   s.Name(),
+		ExecutionModel: "next_open",
 		StartDate:      startDate,
 		EndDate:        endDate,
 		InitialCapital: initialCash,

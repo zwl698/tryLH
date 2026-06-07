@@ -78,6 +78,7 @@ type SelectionResult struct {
 	Universe     string          `json:"universe"`
 	GeneratedAt  time.Time       `json:"generated_at"`
 	Picks        []StockPick     `json:"picks"`
+	Evaluated    []StockPick     `json:"evaluated"`
 	Rejected     []RejectedStock `json:"rejected"`
 	DataIssues   []string        `json:"data_issues"`
 }
@@ -236,10 +237,15 @@ func (e *Engine) Select(ctx context.Context, req SelectionRequest) (*SelectionRe
 		return picks[i].Score > picks[j].Score
 	})
 
-	if topN > len(picks) {
-		topN = len(picks)
+	evaluatedPicks := append([]StockPick(nil), picks...)
+	for i := range evaluatedPicks {
+		evaluatedPicks[i].Rank = i + 1
 	}
-	picks = picks[:topN]
+
+	if topN > len(evaluatedPicks) {
+		topN = len(evaluatedPicks)
+	}
+	picks = append([]StockPick(nil), evaluatedPicks[:topN]...)
 	for i := range picks {
 		picks[i].Rank = i + 1
 	}
@@ -255,6 +261,7 @@ func (e *Engine) Select(ctx context.Context, req SelectionRequest) (*SelectionRe
 		Universe:     normalizedUniverse(req.Universe),
 		GeneratedAt:  time.Now(),
 		Picks:        picks,
+		Evaluated:    evaluatedPicks,
 		Rejected:     rejected,
 		DataIssues:   dataIssues,
 	}, nil

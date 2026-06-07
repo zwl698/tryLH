@@ -72,6 +72,21 @@ function equityOption(result) {
   };
 }
 
+function renderSignedPercent(value) {
+  const number = Number(value || 0);
+  return (
+    <span style={{ color: number >= 0 ? '#f5222d' : '#52c41a', fontWeight: 600 }}>
+      {number >= 0 ? '+' : ''}{number.toFixed(2)}%
+    </span>
+  );
+}
+
+function outcomeTag(outcome) {
+  if (outcome === 'profit') return <Tag color="red">盈利</Tag>;
+  if (outcome === 'loss') return <Tag color="green">亏损</Tag>;
+  return <Tag>持平</Tag>;
+}
+
 export default function SmartTradePage() {
   const [form] = Form.useForm();
   const [messageApi, contextHolder] = message.useMessage();
@@ -115,6 +130,7 @@ export default function SmartTradePage() {
   };
 
   const selectedStrategy = Form.useWatch('strategy_type', form) || 'momentum';
+  const selectedMode = Form.useWatch('mode', form) || 'paper';
   const selectedPlanID = Form.useWatch('plan_id', form);
   const selectedPlan = useMemo(
     () => plans.find(plan => plan.id === (selectedPlanID || defaultPlanForStrategy(plans, selectedStrategy))),
@@ -142,7 +158,7 @@ export default function SmartTradePage() {
         end_date: dateRange[1] ? dateRange[1].format('YYYY-MM-DD') : '',
       });
       setResult(data);
-      messageApi.success('智能选股与回测完成');
+      messageApi.success('智能选股与全量验证回测完成');
     } catch (e) {
       if (e.message) messageApi.error('智能交易失败: ' + e.message);
     } finally {
@@ -216,8 +232,11 @@ export default function SmartTradePage() {
   ];
 
   const candidateBacktestColumns = [
+    { title: '验证排名', dataIndex: 'rank', key: 'rank', width: 88 },
     { title: '股票', dataIndex: 'stock_name', key: 'stock_name', render: (name, r) => `${name || r.stock_code} (${r.stock_code})` },
-    { title: '单股收益', dataIndex: 'total_return', key: 'total_return', align: 'right', render: v => `${Number(v || 0).toFixed(2)}%` },
+    { title: '入选', dataIndex: 'selected', key: 'selected', width: 72, render: selected => <Tag color={selected ? 'blue' : 'default'}>{selected ? '推荐' : '未入选'}</Tag> },
+    { title: '结论', dataIndex: 'outcome', key: 'outcome', width: 72, render: outcomeTag },
+    { title: '单股收益', dataIndex: 'total_return', key: 'total_return', align: 'right', render: renderSignedPercent },
     { title: '最大回撤', dataIndex: 'max_drawdown', key: 'max_drawdown', align: 'right', render: v => `${Number(v || 0).toFixed(2)}%` },
     { title: '夏普', dataIndex: 'sharpe_ratio', key: 'sharpe_ratio', align: 'right', render: v => Number(v || 0).toFixed(2) },
     { title: '交易次数', dataIndex: 'total_trades', key: 'total_trades', align: 'right' },
@@ -229,6 +248,7 @@ export default function SmartTradePage() {
   const universeOptions = universe.map(stock => ({ value: stock.code, label: `${stock.code} ${stock.name}` }));
   const validation = result?.validation_summary || {};
   const validationWarnings = validation.warnings || [];
+  const liveApplyBlocked = selectedMode === 'live' && validation.deployable === false;
 
   return (
     <Spin spinning={loading}>
@@ -249,7 +269,7 @@ export default function SmartTradePage() {
                 <div className="quant-mini-metric"><span>候选池</span><strong>{universe.length || '--'}</strong></div>
                 <div className="quant-mini-metric"><span>选股方案</span><strong>{plans.length || '--'}</strong></div>
                 <div className="quant-mini-metric"><span>策略模板</span><strong>{templates.length || '--'}</strong></div>
-                <div className="quant-mini-metric"><span>运行模式</span><strong>{form.getFieldValue('mode') === 'live' ? '实盘' : '模拟'}</strong></div>
+                <div className="quant-mini-metric"><span>运行模式</span><strong>{selectedMode === 'live' ? '实盘' : '模拟'}</strong></div>
               </Space>
             </Col>
           </Row>
@@ -372,18 +392,31 @@ export default function SmartTradePage() {
               />
             )}
 
+            {validation.gate_reason && (
+              <Alert
+                showIcon
+                type={validation.deployable === false ? 'error' : 'info'}
+                message="实盘门禁提示"
+                description={validation.gate_reason}
+                style={{ marginBottom: 16 }}
+              />
+            )}
+
             <Card title="机构级验证摘要" size="small" className="quant-terminal-card">
               <Row gutter={[16, 16]}>
-                <Col xs={12} md={5}>
+                <Col xs={12} md={4}>
                   <Statistic title="验证股票" value={validation.validated_count || 0} suffix={`/ ${validation.candidate_count || 0}`} />
                 </Col>
-                <Col xs={12} md={5}>
+                <Col xs={12} md={4}>
                   <Statistic title="正收益数量" value={validation.positive_count || 0} />
                 </Col>
-                <Col xs={12} md={5}>
+                <Col xs={12} md={4}>
+                  <Statistic title="亏损数量" value={validation.negative_count || 0} />
+                </Col>
+                <Col xs={12} md={4}>
                   <Statistic title="正收益率" value={Number(validation.positive_rate || 0)} precision={2} suffix="%" />
                 </Col>
-                <Col xs={12} md={5}>
+                <Col xs={12} md={4}>
                   <Statistic title="最佳单股收益" value={Number(validation.best_return || 0)} precision={2} suffix="%" />
                 </Col>
                 <Col xs={12} md={4}>
@@ -415,8 +448,8 @@ export default function SmartTradePage() {
                   size="small"
                   className="quant-terminal-card"
                   extra={
-                    <Button type="primary" onClick={handleApply} loading={applying}>
-                      应用到{form.getFieldValue('mode') === 'live' ? '实盘' : '模拟交易'}
+                    <Button type="primary" onClick={handleApply} loading={applying} disabled={liveApplyBlocked}>
+                      应用到{selectedMode === 'live' ? '实盘' : '模拟交易'}
                     </Button>
                   }
                 >
@@ -445,13 +478,19 @@ export default function SmartTradePage() {
               </Space>
             </Card>
 
-            <Card title="策略单股验证回测" size="small" className="quant-terminal-card">
+            <Card
+              title="全量候选验证回测（含亏损样本）"
+              size="small"
+              className="quant-terminal-card"
+              extra={<Text type="secondary">最终推荐 {result.selected_backtests?.length || 0} / 验证 {result.candidate_backtests?.length || 0}</Text>}
+            >
               <Table
                 rowKey="stock_code"
                 size="small"
                 columns={candidateBacktestColumns}
                 dataSource={result.candidate_backtests || []}
-                pagination={false}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                scroll={{ x: 900 }}
               />
             </Card>
           </>

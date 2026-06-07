@@ -182,6 +182,103 @@ func TestBacktestEngine_CompletedTradeStats(t *testing.T) {
 	}
 }
 
+type oneShotCloseSignalStrategy struct {
+	strategy.BaseStrategy
+	emitted bool
+}
+
+func newOneShotCloseSignalStrategy() *oneShotCloseSignalStrategy {
+	cfg := models.StrategyConfig{
+		ID:     "one_shot",
+		Name:   "下一开盘测试策略",
+		Type:   "one_shot",
+		Stocks: []string{"600000"},
+		Params: map[string]interface{}{},
+		Status: models.StrategyStatusPaused,
+	}
+	return &oneShotCloseSignalStrategy{
+		BaseStrategy: strategy.NewBaseStrategy(cfg, zap.NewNop()),
+	}
+}
+
+func (s *oneShotCloseSignalStrategy) Type() string { return "one_shot" }
+
+func (s *oneShotCloseSignalStrategy) Init(config models.StrategyConfig) error {
+	s.emitted = false
+	return nil
+}
+
+func (s *oneShotCloseSignalStrategy) OnBar(ctx context.Context, kline models.KLine) ([]models.Signal, error) {
+	if s.emitted {
+		return nil, nil
+	}
+	s.emitted = true
+	return []models.Signal{{
+		StrategyID: s.ID(),
+		StockCode:  kline.StockCode,
+		Side:       models.OrderSideBuy,
+		Type:       models.OrderTypeLimit,
+		Price:      kline.Close,
+		Volume:     100,
+		Timestamp:  kline.Timestamp,
+	}}, nil
+}
+
+func (s *oneShotCloseSignalStrategy) OnQuote(ctx context.Context, quote models.StockQuote) ([]models.Signal, error) {
+	return nil, nil
+}
+
+func (s *oneShotCloseSignalStrategy) OnTick(ctx context.Context, quote models.StockQuote) ([]models.Signal, error) {
+	return nil, nil
+}
+
+func TestBacktestEngine_ExecutesDailySignalAtNextOpen(t *testing.T) {
+	btEngine := NewBacktestEngine(0, 0, 0, zap.NewNop())
+	klines := map[string][]models.KLine{
+		"600000": {
+			{
+				StockCode: "600000",
+				Period:    "day",
+				Open:      decimal.NewFromInt(10),
+				High:      decimal.NewFromInt(20),
+				Low:       decimal.NewFromInt(10),
+				Close:     decimal.NewFromInt(20),
+				Volume:    1000000,
+				Timestamp: time.Date(2024, 1, 2, 15, 0, 0, 0, time.Local),
+			},
+			{
+				StockCode: "600000",
+				Period:    "day",
+				Open:      decimal.NewFromInt(30),
+				High:      decimal.NewFromInt(31),
+				Low:       decimal.NewFromInt(29),
+				Close:     decimal.NewFromInt(30),
+				Volume:    1000000,
+				Timestamp: time.Date(2024, 1, 3, 15, 0, 0, 0, time.Local),
+			},
+		},
+	}
+
+	result, err := btEngine.Run(
+		context.Background(),
+		newOneShotCloseSignalStrategy(),
+		klines,
+		time.Date(2024, 1, 2, 0, 0, 0, 0, time.Local),
+		time.Date(2024, 1, 3, 0, 0, 0, 0, time.Local),
+		decimal.NewFromInt(10000),
+	)
+	if err != nil {
+		t.Fatalf("回测失败: %v", err)
+	}
+	if result.ExecutionModel != "next_open" {
+		t.Fatalf("成交模型应标记为下一交易日开盘，实际 %s", result.ExecutionModel)
+	}
+	expectedFinal := decimal.NewFromInt(9995)
+	if !result.FinalCapital.Equal(expectedFinal) {
+		t.Fatalf("收盘信号应在下一交易日开盘30元成交并扣5元最低佣金，期望最终资金 %s，实际 %s", expectedFinal, result.FinalCapital)
+	}
+}
+
 func TestBacktestEngine_Sqrt(t *testing.T) {
 	tests := []struct {
 		input    float64
